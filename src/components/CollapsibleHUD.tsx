@@ -54,7 +54,10 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   channelVotes = 0,
   cumulativeVotes = 0,
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  // Top HUD collapse state (allows folding the step pipeline into a single line)
+  const [isTopCollapsed, setIsTopCollapsed] = useState(false);
+  // Bottom dock collapse state
+  const [isBottomCollapsed, setIsBottomCollapsed] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
   const steps = [
@@ -83,47 +86,64 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
       {/* Top Header / Progress Timeline */}
-      <div className="absolute top-3 inset-x-3 sm:inset-x-8 flex flex-col items-center pointer-events-auto">
-        <div className="w-full max-w-4xl bg-slate-900/85 border border-slate-700/80 rounded-2xl shadow-xl p-3 sm:p-4 backdrop-blur-md">
-          {/* Top Info Bar */}
-          <div className="flex items-center justify-between mb-2.5 px-1 text-xs gap-2">
-            <div className="flex items-center gap-2 min-w-0 flex-wrap sm:flex-nowrap">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-400 shrink-0" />
-              <span className="font-bold text-white text-sm shrink-0">3D 가상 투표소</span>
+      <div className="absolute top-2.5 sm:top-3 inset-x-2.5 sm:inset-x-8 flex flex-col items-center pointer-events-auto transition-all">
+        <div className="w-full max-w-4xl bg-slate-900/90 border border-slate-700/80 rounded-2xl shadow-xl p-2 sm:p-3.5 backdrop-blur-md transition-all duration-200">
+          {/* Top Info Bar: Flex wrap container to prevent button crowding and text splitting */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 sm:gap-2 px-0.5 sm:px-1 text-xs">
+            {/* Left Brand and Channel / Voter Count Badge */}
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-wrap sm:flex-nowrap">
+              <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-sky-400 shrink-0" />
+              <span className="font-bold text-white text-xs sm:text-sm whitespace-nowrap shrink-0">
+                3D 가상 투표소
+              </span>
+
               {pollTitle && (
-                <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-slate-800 text-[11px] text-sky-300 font-semibold truncate max-w-[180px] border border-slate-700">
+                <span className="hidden md:inline-block px-2 py-0.5 rounded-full bg-slate-800 text-[11px] text-sky-300 font-semibold truncate max-w-[170px] border border-slate-700 shrink-0">
                   {pollTitle}
                 </span>
               )}
 
-              {/* Official 100-voter channel badge or custom voter count */}
+              {/* 1. Official 100-voter channel badge or custom voter count with whitespace-nowrap & shrink-0 */}
               {isOfficial ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/40">
+                <span className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/40 whitespace-nowrap shrink-0">
                   <Layers className="w-3 h-3 text-sky-400 shrink-0" />
-                  <span>
-                    제{activeChannelIndex}투표소 • {channelVotes} / 100명 (누적 {cumulativeVotes}명)
+                  {/* Compact on mobile, full detail on larger screens */}
+                  <span className="sm:hidden">
+                    제{activeChannelIndex}투표소 · {channelVotes}/100명
+                  </span>
+                  <span className="hidden sm:inline">
+                    제{activeChannelIndex}투표소 · {channelVotes} / 100명 (누적 {cumulativeVotes}명)
                   </span>
                 </span>
               ) : (
                 totalVoters !== undefined && (
                   <span
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                    className={`inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-semibold border whitespace-nowrap shrink-0 ${
                       totalVoters >= (maxVoters || 100)
                         ? 'bg-rose-500/20 text-rose-300 border-rose-500/30 font-bold'
                         : 'bg-slate-800 text-emerald-300 border-slate-700'
                     }`}
                   >
-                    참여 {totalVoters} / {maxVoters || 100}명
-                    {totalVoters >= (maxVoters || 100) && ' (정원 마감)'}
+                    <span className="sm:hidden">
+                      참여 {totalVoters}/{maxVoters || 100}명
+                      {totalVoters >= (maxVoters || 100) && ' (마감)'}
+                    </span>
+                    <span className="hidden sm:inline">
+                      참여 {totalVoters} / {maxVoters || 100}명
+                      {totalVoters >= (maxVoters || 100) && ' (정원 마감)'}
+                    </span>
                   </span>
                 )
               )}
 
-              <span className="text-slate-400 hidden xl:inline shrink-0">| 선거인:</span>
-              <span className="text-sky-300 font-semibold hidden xl:inline truncate max-w-[220px]">{nickname}</span>
+              <span className="text-slate-400 hidden lg:inline shrink-0">| 선거인:</span>
+              <span className="text-sky-300 font-semibold hidden lg:inline truncate max-w-[180px]">
+                {nickname}
+              </span>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            {/* 2. Right action buttons container with flex-wrap gap-1.5 for clean mobile multi-row arrangement */}
+            <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap sm:flex-nowrap shrink-0 ml-auto">
               {onOpenLobby && (
                 <button
                   type="button"
@@ -131,11 +151,12 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                     sounds.playClick();
                     onOpenLobby();
                   }}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/20 border border-sky-400/40 text-sky-200 font-bold hover:bg-sky-500/30 transition cursor-pointer text-xs"
+                  className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-sky-500/20 border border-sky-400/40 text-sky-200 font-bold hover:bg-sky-500/30 transition cursor-pointer text-[10px] sm:text-xs whitespace-nowrap shrink-0"
                   title="다른 투표소 안건 선택 로비로 이동"
                 >
-                  <Vote className="w-3.5 h-3.5" />
-                  <span>다른 투표소 가기</span>
+                  <Vote className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                  <span className="sm:hidden">다른 투표소</span>
+                  <span className="hidden sm:inline">다른 투표소 가기</span>
                 </button>
               )}
 
@@ -143,63 +164,86 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                 <button
                   type="button"
                   onClick={onOpenCertificate}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold hover:bg-emerald-500/30 transition cursor-pointer text-xs"
+                  className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold hover:bg-emerald-500/30 transition cursor-pointer text-[10px] sm:text-xs whitespace-nowrap shrink-0"
+                  title="디지털 투표확인증 열기"
                 >
-                  <FileCheck className="w-3.5 h-3.5" />
+                  <FileCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
                   <span>투표확인증</span>
                 </button>
               )}
+
               <button
                 type="button"
                 onClick={() => setShowHelp(!showHelp)}
-                className="p-1 text-slate-400 hover:text-slate-200 transition cursor-pointer rounded-lg hover:bg-slate-800"
+                className="p-1 text-slate-400 hover:text-slate-200 transition cursor-pointer rounded-lg hover:bg-slate-800 shrink-0"
                 title="조작법 안내"
+                aria-label="조작법 안내"
               >
-                <HelpCircle className="w-4 h-4" />
+                <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </button>
+
+              {/* 3. Top HUD Collapse / Expand Toggle Button (▲ / ▼) */}
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setIsTopCollapsed((prev) => !prev);
+                }}
+                className="p-1 sm:p-1.5 text-slate-300 hover:text-white transition cursor-pointer rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700/80 shrink-0"
+                title={isTopCollapsed ? '상단 진행 단계 펼치기' : '상단 메뉴 한 줄로 접기 (시네마 뷰)'}
+                aria-label={isTopCollapsed ? '상단 진행 단계 펼치기' : '상단 메뉴 한 줄로 접기'}
+              >
+                {isTopCollapsed ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-sky-400" />
+                ) : (
+                  <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                )}
               </button>
             </div>
           </div>
 
-          {/* 4-Step Process Pipeline */}
-          <div className="grid grid-cols-4 gap-1.5 sm:gap-3 text-center">
-            {steps.map((s) => {
-              const isPast = s.num < currentStep;
-              const isCurrent = s.num === currentStep;
+          {/* 4-Step Process Pipeline: Shown when !isTopCollapsed */}
+          {!isTopCollapsed && (
+            <div className="grid grid-cols-4 gap-1 sm:gap-2.5 text-center mt-2 pt-2 border-t border-slate-800/80 animate-in fade-in duration-150">
+              {steps.map((s) => {
+                const isPast = s.num < currentStep;
+                const isCurrent = s.num === currentStep;
 
-              return (
-                <div
-                  key={s.num}
-                  className={`p-2 rounded-xl border transition-all ${
-                    isCurrent
-                      ? 'bg-sky-500/15 border-sky-400 text-sky-200 ring-1 ring-sky-400/30 shadow-sm'
-                      : isPast
-                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                      : 'bg-slate-800/40 border-slate-700/60 text-slate-400'
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-1.5 mb-0.5">
-                    <span
-                      className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                        isCurrent
-                          ? 'bg-sky-500 text-white'
-                          : isPast
-                          ? 'bg-emerald-500 text-white'
-                          : 'bg-slate-700 text-slate-300'
-                      }`}
-                    >
-                      {s.num}
-                    </span>
-                    <span className="text-xs sm:text-sm font-bold text-white truncate">
-                      {s.title}
-                    </span>
+                return (
+                  <div
+                    key={s.num}
+                    className={`p-1.5 sm:p-2 rounded-xl border transition-all ${
+                      isCurrent
+                        ? 'bg-sky-500/15 border-sky-400 text-sky-200 ring-1 ring-sky-400/30 shadow-sm'
+                        : isPast
+                        ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                        : 'bg-slate-800/40 border-slate-700/60 text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5">
+                      <span
+                        className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center text-[9px] sm:text-[10px] font-bold ${
+                          isCurrent
+                            ? 'bg-sky-500 text-white'
+                            : isPast
+                            ? 'bg-emerald-500 text-white'
+                            : 'bg-slate-700 text-slate-300'
+                        }`}
+                      >
+                        {s.num}
+                      </span>
+                      <span className="text-[11px] sm:text-xs font-bold text-white truncate">
+                        {s.title}
+                      </span>
+                    </div>
+                    <p className="text-[9px] sm:text-[10px] text-slate-400 hidden sm:block truncate">
+                      {s.sub}
+                    </p>
                   </div>
-                  <p className="text-[10px] text-slate-400 hidden sm:block truncate">
-                    {s.sub}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -259,13 +303,13 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
       {/* Unified Bottom Control Dock */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 pointer-events-auto transition-transform duration-300">
         <div className="flex flex-col items-center">
-          {/* Collapse / Expand Toggle Button */}
+          {/* Collapse / Expand Toggle Button for Bottom Dock */}
           <button
             type="button"
-            onClick={() => setIsCollapsed(!isCollapsed)}
+            onClick={() => setIsBottomCollapsed(!isBottomCollapsed)}
             className="flex items-center gap-1.5 px-3 py-1 rounded-t-xl bg-slate-900/90 border-t border-x border-slate-700/80 text-[11px] font-semibold text-slate-300 hover:text-white backdrop-blur-sm transition cursor-pointer shadow-md"
           >
-            {isCollapsed ? (
+            {isBottomCollapsed ? (
               <>
                 <ChevronUp className="w-3.5 h-3.5" />
                 <span>컨트롤 바 펼치기</span>
@@ -273,13 +317,13 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
             ) : (
               <>
                 <ChevronDown className="w-3.5 h-3.5" />
-                <span>시네마 뷰 (숨기기)</span>
+                <span>컨트롤 바 접기</span>
               </>
             )}
           </button>
 
-          {/* Main Dock */}
-          {!isCollapsed && (
+          {/* Main Bottom Dock */}
+          {!isBottomCollapsed && (
             <div className="w-full flex items-center justify-between gap-3 bg-slate-900/85 border border-slate-700/80 rounded-2xl p-3 shadow-2xl backdrop-blur-md">
               {/* Desktop keyboard hint */}
               <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400">
