@@ -6,11 +6,18 @@ import {
   getAllPolls,
   savePoll,
   deletePoll,
+  savePollAsync,
+  deletePollAsync,
+  fetchPollsAsync,
   BETA_DISCLAIMER_TEXT,
   checkPoliticalContent,
   getActiveOfficialChannel,
   formatRemainingTime,
 } from '../data/presetPolls';
+import {
+  fetchVoteversePolls,
+  createVoteversePoll,
+} from '../lib/voteverseBackend';
 import {
   UserCheck,
   Sparkles,
@@ -66,6 +73,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   // Periodic tick for live countdown timer & auto-purge of expired polls
   const [, setTick] = useState<number>(0);
   useEffect(() => {
+    // Initial fetch from Supabase (category <> 'private')
+    fetchVoteversePolls().then((fetched) => {
+      if (fetched && fetched.length > 0) {
+        setPolls(fetched);
+      }
+    });
+
     const timer = setInterval(() => {
       setTick((t) => t + 1);
       setPolls(getAllPolls());
@@ -274,7 +288,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       expiresAt,
     };
 
-    savePoll(createdPoll);
+    createVoteversePoll(createdPoll);
     setPolls(getAllPolls());
     setSelectedPollId(createdPoll.id);
 
@@ -334,7 +348,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       const targetPoll = adminAuthModal.poll;
 
       if (adminAuthModal.type === 'delete') {
-        deletePoll(targetPoll.id);
+        deletePollAsync(targetPoll.id);
         const updatedPolls = getAllPolls();
         setPolls(updatedPolls);
         if (selectedPollId === targetPoll.id) {
@@ -416,7 +430,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       candidates: updatedCandidates,
     };
 
-    savePoll(updatedPoll);
+    savePollAsync(updatedPoll);
     setPolls(getAllPolls());
     setEditingPoll(null);
   };
@@ -597,7 +611,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
           {activeTab === 'public' && (
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
               {polls
-                .filter((p) => p.category === 'public')
+                .filter((p) => p.category !== 'private')
                 .map((poll) => {
                   const isSelected = selectedPollId === poll.id;
                   const isCopied = copiedId === poll.id;

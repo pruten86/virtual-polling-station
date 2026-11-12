@@ -246,6 +246,36 @@ class SoundSystem {
       // ignore
     }
   }
+
+  // Low buzz / double warning sound
+  public playWarning() {
+    if (this.isMuted) return;
+    try {
+      this.initContext();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+
+      [0, 0.1].forEach((delay) => {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, now + delay);
+        osc.frequency.exponentialRampToValueAtTime(160, now + delay + 0.08);
+
+        gain.gain.setValueAtTime(0.2, now + delay);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.08);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(now + delay);
+        osc.stop(now + delay + 0.09);
+      });
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export const sounds = new SoundSystem();

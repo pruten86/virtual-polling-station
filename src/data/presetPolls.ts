@@ -1,4 +1,5 @@
 import { PollStation, Candidate, PollChannelData } from '../types';
+import { supabase, isSupabaseConfigured, getVoterUUID, GuestbookEntry } from '../lib/supabase';
 
 const ADJECTIVES = [
   '소신 있는',
@@ -637,4 +638,387 @@ export function recordPollVote(
   }
 
   return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Supabase Async Realtime & Duplicate Prevention Functions
+// ---------------------------------------------------------------------------
+
+const STORAGE_KEY_VOTED_PREFIX = 'vps_user_voted_';
+const STORAGE_KEY_GUESTBOOK_PREFIX = 'vps_guestbook_';
+
+/**
+ * Check if the current browser/device has already cast a vote for this poll
+ */
+export async function checkHasVoted(pollId: string): Promise<boolean> {
+  const voterUuid = getVoterUUID();
+
+  // 1. Check local storage cache first
+  try {
+    if (localStorage.getItem(STORAGE_KEY_VOTED_PREFIX + pollId) === 'true') {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Query Supabase votes table if configured
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('votes')
+        .select('id')
+        .eq('poll_id', pollId)
+        .eq('voter_uuid', voterUuid)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        try {
+          localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
+        } catch {
+          // ignore
+        }
+        return true;
+      }
+    } catch (err) {
+      console.warn('[Supabase checkHasVoted error, fallback to local]', err);
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Record a vote with duplicate prevention, official channel expansion, and Supabase sync
+ */
+export async function recordVoteAsync(
+  pollId: string,
+  candidateId: string,
+  currentCandidates: Candidate[],
+  isOfficial: boolean
+): Promise<{
+  success: boolean;
+  alreadyVoted?: boolean;
+  updatedCandidates: Candidate[];
+  officialState?: {
+    activeChannelIndex: number;
+    channelVotes: number;
+    totalCumulativeVotes: number;
+    allChannels: PollChannelData[];
+  };
+}> {
+  // Check duplicate vote
+  const already = await checkHasVoted(pollId);
+  if (already) {
+    return {
+      success: false,
+      alreadyVoted: true,
+      updatedCandidates: currentCandidates,
+    };
+  }
+
+  // Mark in local storage immediately
+  try {
+    localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
+  } catch {
+    // ignore
+  }
+
+  const voterUuid = getVoterUUID();
+
+  // 1. Process in local data layer
+  let updatedCandidates: Candidate[] = [];
+  let officialState: {
+    activeChannelIndex: number;
+    channelVotes: number;
+    totalCumulativeVotes: number;
+    allChannels: PollChannelData[];
+  } | undefined;
+
+  if (isOfficial) {
+    const res = recordOfficialVote(pollId, candidateId, currentCandidates);
+    updatedCandidates = res.cumulativeCandidates;
+    officialState = {
+      activeChannelIndex: res.activeChannelIndex,
+      channelVotes: res.activeChannelVotes,
+      totalCumulativeVotes: res.totalCumulativeVotes,
+      allChannels: res.allChannels,
+    };
+  } else {
+    updatedCandidates = recordPollVote(pollId, candidateId, currentCandidates);
+  }
+
+  // 2. Persist to Supabase if configured
+  if (isSupabaseConfigured && supabase) {
+    try {
+      // Insert vote record
+      await supabase.from('votes').insert([
+        {
+          poll_id: pollId,
+          option_id: candidateId,
+          voter_uuid: voterUuid,
+        },
+      ]);
+
+      // Attempt to increment vote_count in poll_options
+      const targetCandidate = updatedCandidates.find((c) => c.id === candidateId);
+      if (targetCandidate) {
+        await supabase
+          .from('poll_options')
+          .update({ vote_count: targetCandidate.votes })
+          .eq('poll_id', pollId)
+          .eq('id', candidateId);
+      }
+    } catch (err) {
+      console.warn('[Supabase recordVoteAsync error, local state retained]', err);
+    }
+  }
+
+  return {
+    success: true,
+    alreadyVoted: false,
+    updatedCandidates,
+    officialState,
+  };
+}
+
+/**
+ * Async fetch polls merging Supabase and local/presets
+ */
+export async function fetchPollsAsync(): Promise<PollStation[]> {
+  const localPolls = getAllPolls();
+
+  if (!isSupabaseConfigured || !supabase) {
+    return localPolls;
+  }
+
+  try {
+    const { data: pollsData, error: pollsError } = await supabase
+      .from('polls')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (pollsError || !pollsData || pollsData.length === 0) {
+      return localPolls;
+    }
+
+    const { data: optionsData } = await supabase.from('poll_options').select('*');
+
+    const optionsMap: Record<string, Candidate[]> = {};
+    if (optionsData) {
+      optionsData.forEach((opt: any) => {
+        if (!optionsMap[opt.poll_id]) {
+          optionsMap[opt.poll_id] = [];
+        }
+        optionsMap[opt.poll_id].push({
+          id: opt.id,
+          symbolNumber: opt.symbol_number,
+          party: opt.party || '',
+          title: opt.title,
+          subtitle: opt.subtitle || '',
+          badgeColor: opt.badge_color || 'blue',
+          accentBg: opt.accent_bg || '#3b82f6',
+          description: opt.description || '',
+          votes: Number(opt.vote_count) || 0,
+        });
+      });
+    }
+
+    const remotePolls: PollStation[] = pollsData.map((row: any) => {
+      const candidates = (optionsMap[row.id] || []).sort(
+        (a, b) => a.symbolNumber - b.symbolNumber
+      );
+      return {
+        id: row.id,
+        title: row.title,
+        description: row.description || '',
+        category: row.category || 'public',
+        accessCode: row.access_code || undefined,
+        adminPin: row.admin_pin || undefined,
+        maxVoters: Number(row.max_voters) || 100,
+        createdAt: row.created_at ? row.created_at.split('T')[0] : '2026-11-08',
+        isOfficial: Boolean(row.is_official),
+        isCustom: !row.is_official,
+        durationHours: Number(row.duration_hours) || 24,
+        expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : undefined,
+        candidates: candidates.length > 0 ? candidates : PRESET_POLLS[0].candidates,
+      };
+    });
+
+    // Merge: ensure preset polls are present
+    const remoteIds = new Set(remotePolls.map((p) => p.id));
+    const merged = [...remotePolls];
+    PRESET_POLLS.forEach((preset) => {
+      if (!remoteIds.has(preset.id)) {
+        merged.push(preset);
+      }
+    });
+
+    return merged;
+  } catch (err) {
+    console.warn('[Supabase fetchPollsAsync error, fallback to local]', err);
+    return localPolls;
+  }
+}
+
+/**
+ * Save poll to local storage and Supabase
+ */
+export async function savePollAsync(poll: PollStation): Promise<void> {
+  // Always save locally first
+  savePoll(poll);
+
+  if (isSupabaseConfigured && supabase && poll.isCustom) {
+    try {
+      // Upsert poll
+      await supabase.from('polls').upsert([
+        {
+          id: poll.id,
+          title: poll.title,
+          description: poll.description,
+          category: poll.category,
+          access_code: poll.accessCode || null,
+          admin_pin: poll.adminPin || null,
+          max_voters: poll.maxVoters,
+          is_official: Boolean(poll.isOfficial),
+          duration_hours: poll.durationHours || 24,
+          expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      // Upsert options
+      const optionRows = poll.candidates.map((c) => ({
+        id: c.id,
+        poll_id: poll.id,
+        symbol_number: c.symbolNumber,
+        party: c.party,
+        title: c.title,
+        subtitle: c.subtitle,
+        badge_color: c.badgeColor,
+        accent_bg: c.accentBg,
+        vote_count: c.votes || 0,
+      }));
+
+      await supabase.from('poll_options').upsert(optionRows);
+    } catch (err) {
+      console.warn('[Supabase savePollAsync error, saved to local]', err);
+    }
+  }
+}
+
+/**
+ * Delete poll from local storage and Supabase
+ */
+export async function deletePollAsync(pollId: string): Promise<void> {
+  deletePoll(pollId);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('votes').delete().eq('poll_id', pollId);
+      await supabase.from('poll_options').delete().eq('poll_id', pollId);
+      await supabase.from('polls').delete().eq('id', pollId);
+    } catch (err) {
+      console.warn('[Supabase deletePollAsync error]', err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Guestbook (유권자 한마디 방명록)
+// ---------------------------------------------------------------------------
+
+export async function fetchGuestbookAsync(pollId: string): Promise<GuestbookEntry[]> {
+  // 1. Try Supabase
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('guestbook')
+        .select('*')
+        .eq('poll_id', pollId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!error && data) {
+        return data.map((row: any) => ({
+          id: String(row.id),
+          pollId: row.poll_id,
+          nickname: row.nickname,
+          message: row.message,
+          createdAt: row.created_at,
+        }));
+      }
+    } catch (err) {
+      console.warn('[Supabase fetchGuestbookAsync error]', err);
+    }
+  }
+
+  // 2. Local fallback
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_GUESTBOOK_PREFIX + pollId);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Initial cheerful greeting comments for new visitors
+  return [
+    {
+      id: 'welcome-1',
+      pollId,
+      nickname: '소신 있는 유권자 #101',
+      message: '🗳️ 우리 모두의 소중한 한 표가 모여 더 나은 결정을 만듭니다!',
+      createdAt: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: 'welcome-2',
+      pollId,
+      nickname: '칼퇴를 꿈꾸는 주권자 #405',
+      message: '공정하고 투명한 모의투표 체험 최고네요! 모두 응원합니다 👏',
+      createdAt: new Date(Date.now() - 1800000).toISOString(),
+    },
+  ];
+}
+
+export async function addGuestbookAsync(
+  pollId: string,
+  nickname: string,
+  message: string
+): Promise<GuestbookEntry> {
+  const newEntry: GuestbookEntry = {
+    id: 'gb_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
+    pollId,
+    nickname,
+    message,
+    createdAt: new Date().toISOString(),
+  };
+
+  // 1. Local fallback storage
+  try {
+    const current = await fetchGuestbookAsync(pollId);
+    const updated = [newEntry, ...current].slice(0, 50);
+    localStorage.setItem(STORAGE_KEY_GUESTBOOK_PREFIX + pollId, JSON.stringify(updated));
+  } catch {
+    // ignore
+  }
+
+  // 2. Insert into Supabase
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('guestbook').insert([
+        {
+          poll_id: pollId,
+          nickname,
+          message,
+          created_at: newEntry.createdAt,
+        },
+      ]);
+    } catch (err) {
+      console.warn('[Supabase addGuestbookAsync error, saved locally]', err);
+    }
+  }
+
+  return newEntry;
 }

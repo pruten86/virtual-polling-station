@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Candidate, PollChannelData } from '../types';
 import { sounds } from '../sound';
 import {
@@ -9,14 +9,31 @@ import {
   FileCheck,
   CheckCircle2,
   Layers,
+  Radio,
+  MessageSquare,
+  Send,
+  Sparkles,
+  Clock,
+  User,
 } from 'lucide-react';
-import { BETA_DISCLAIMER_TEXT } from '../data/presetPolls';
+import {
+  BETA_DISCLAIMER_TEXT,
+  fetchGuestbookAsync,
+  addGuestbookAsync,
+} from '../data/presetPolls';
+import {
+  supabase,
+  isSupabaseConfigured,
+  GuestbookEntry,
+} from '../lib/supabase';
 
 interface ResultsModalProps {
   candidates: Candidate[];
   pollTitle?: string;
+  pollId?: string;
   maxVoters?: number;
   userVoteId: string | null;
+  nickname?: string;
   onOpenCertificate: () => void;
   onResetVotes: () => void;
   onSwitchPoll?: () => void;
@@ -24,13 +41,16 @@ interface ResultsModalProps {
   isOfficial?: boolean;
   allChannels?: PollChannelData[];
   activeChannelIndex?: number;
+  onRealtimeCandidateUpdate?: (updatedCandidates: Candidate[]) => void;
 }
 
 export const ResultsModal: React.FC<ResultsModalProps> = ({
   candidates,
   pollTitle,
+  pollId = 'poll-default',
   maxVoters = 100,
   userVoteId,
+  nickname = '선거인',
   onOpenCertificate,
   onResetVotes,
   onSwitchPoll,
@@ -38,30 +58,231 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   isOfficial = false,
   allChannels = [],
   activeChannelIndex = 1,
+  onRealtimeCandidateUpdate,
 }) => {
   // View mode for official polls: 'cumulative' or channel index number (1, 2, 3...)
   const [selectedChannelView, setSelectedChannelView] = useState<'cumulative' | number>('cumulative');
 
+  // Realtime Candidate Tallies state synced with parent
+  const [liveCandidates, setLiveCandidates] = useState<Candidate[]>(candidates);
+
+  // Guestbook state
+  const [guestbook, setGuestbook] = useState<GuestbookEntry[]>([]);
+  const [commentInput, setCommentInput] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(isSupabaseConfigured);
+  const guestbookListRef = useRef<HTMLDivElement | null>(null);
+
+  // Sync with prop updates
+  useEffect(() => {
+    setLiveCandidates(candidates);
+  }, [candidates]);
+
+  // Load initial guestbook comments
+  useEffect(() => {
+    let isMounted = true;
+    fetchGuestbookAsync(pollId).then((entries) => {
+      if (isMounted) {
+        setGuestbook(entries);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [pollId]);
+
+  // Supabase Realtime Subscription for votes & guestbook
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setIsRealtimeConnected(false);
+      return;
+    }
+
+    const channelName = `realtime_poll_${pollId}`;
+    const channel = supabase.channel(channelName);
+
+    // 1. Listen for database updates on poll_options
+    channel
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'poll_options',
+          filter: `poll_id=eq.${pollId}`,
+        },
+        (payload: any) => {
+          const updatedRow = payload.new;
+          if (updatedRow && updatedRow.id) {
+            setLiveCandidates((prev) => {
+              const next = prev.map((c) =>
+                c.id === updatedRow.id
+                  ? { ...c, votes: Number(updatedRow.vote_count !== undefined ? updatedRow.vote_count : updatedRow.votes) || c.votes }
+                  : c
+              );
+              if (onRealtimeCandidateUpdate) {
+                onRealtimeCandidateUpdate(next);
+              }
+              return next;
+            });
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'poll_options',
+        },
+        (payload: any) => {
+          const updatedRow = payload.new;
+          if (updatedRow && updatedRow.id && (updatedRow.poll_id === pollId || !updatedRow.poll_id)) {
+            setLiveCandidates((prev) => {
+              const next = prev.map((c) =>
+                c.id === updatedRow.id
+                  ? { ...c, votes: Number(updatedRow.vote_count !== undefined ? updatedRow.vote_count : updatedRow.votes) || c.votes }
+                  : c
+              );
+              if (onRealtimeCandidateUpdate) {
+                onRealtimeCandidateUpdate(next);
+              }
+              return next;
+            });
+          }
+        }
+      )
+      // 2. Listen for new guestbook entries
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'guestbook',
+          filter: `poll_id=eq.${pollId}`,
+        },
+        (payload: any) => {
+          const row = payload.new;
+          if (row) {
+            const entry: GuestbookEntry = {
+              id: String(row.id),
+              pollId: row.poll_id,
+              nickname: row.nickname,
+              message: row.message,
+              createdAt: row.created_at,
+            };
+            setGuestbook((prev) => {
+              if (prev.some((e) => e.id === entry.id)) return prev;
+              return [entry, ...prev].slice(0, 50);
+            });
+          }
+        }
+      )
+      // 3. Broadcast channels for instant peer-to-peer reflection
+      .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
+        if (payload && payload.candidateId) {
+          setLiveCandidates((prev) => {
+            const next = prev.map((c) =>
+              c.id === payload.candidateId ? { ...c, votes: c.votes + 1 } : c
+            );
+            if (onRealtimeCandidateUpdate) {
+              onRealtimeCandidateUpdate(next);
+            }
+            return next;
+          });
+        }
+      })
+      .on('broadcast', { event: 'guestbook_entry' }, ({ payload }: any) => {
+        if (payload && payload.entry) {
+          setGuestbook((prev) => {
+            if (prev.some((e) => e.id === payload.entry.id)) return prev;
+            return [payload.entry, ...prev].slice(0, 50);
+          });
+        }
+      })
+      .subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          setIsRealtimeConnected(true);
+        }
+      });
+
+    return () => {
+      supabase?.removeChannel(channel);
+    };
+  }, [pollId, onRealtimeCandidateUpdate]);
+
+  // Handle Guestbook comment submission
+  const handleCommentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = commentInput.trim();
+    if (!trimmed || isSubmitting) return;
+
+    setIsSubmitting(true);
+    sounds.playClick();
+
+    try {
+      const added = await addGuestbookAsync(pollId, nickname, trimmed);
+      setGuestbook((prev) => [added, ...prev.filter((item) => item.id !== added.id)]);
+      setCommentInput('');
+
+      // Broadcast to other peers if Supabase is active
+      if (isSupabaseConfigured && supabase) {
+        supabase.channel(`realtime_poll_${pollId}`).send({
+          type: 'broadcast',
+          event: 'guestbook_entry',
+          payload: { entry: added },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to post comment', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Quick cheer suggestions
+  const quickTags = [
+    '🗳️ 소중한 한 표 행사 완료!',
+    '👏 공정한 모의투표 응원합니다!',
+    '✨ 민주주의의 꽃, 투표!',
+    '🔥 우리 팀 최고!',
+  ];
+
   // Derive displayed candidates based on selected channel view
   const displayedCandidates: Candidate[] = React.useMemo(() => {
     if (!isOfficial || selectedChannelView === 'cumulative' || allChannels.length === 0) {
-      return candidates;
+      return liveCandidates;
     }
     const targetChannel = allChannels.find((ch) => ch.channelIndex === selectedChannelView);
-    if (!targetChannel) return candidates;
+    if (!targetChannel) return liveCandidates;
 
-    return candidates.map((c) => ({
+    return liveCandidates.map((c) => ({
       ...c,
       votes: targetChannel.votes[c.id] || 0,
     }));
-  }, [candidates, isOfficial, selectedChannelView, allChannels]);
+  }, [liveCandidates, isOfficial, selectedChannelView, allChannels]);
 
   const totalVotes = displayedCandidates.reduce((sum, c) => sum + c.votes, 0);
-  const cumulativeTotal = candidates.reduce((sum, c) => sum + c.votes, 0);
+  const cumulativeTotal = liveCandidates.reduce((sum, c) => sum + c.votes, 0);
 
   // Sort by vote count descending
   const sorted = [...displayedCandidates].sort((a, b) => b.votes - a.votes);
   const leading = sorted[0];
+
+  const formatRelativeTime = (isoString: string): string => {
+    try {
+      const diffSecs = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+      if (diffSecs < 10) return '방금 전';
+      if (diffSecs < 60) return `${diffSecs}초 전`;
+      const diffMins = Math.floor(diffSecs / 60);
+      if (diffMins < 60) return `${diffMins}분 전`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return `${diffHours}시간 전`;
+      return `${Math.floor(diffHours / 24)}일 전`;
+    } catch {
+      return '최근';
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-md">
@@ -79,11 +300,31 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
           <div className="w-12 h-12 rounded-xl bg-orange-500/20 border border-orange-400/30 flex items-center justify-center text-orange-400 shrink-0">
             <BarChart3 className="w-6 h-6" />
           </div>
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-semibold mb-1">
-              <span>제4단계: 개표 전광판 (실시간 집계)</span>
+          <div className="min-w-0 pr-8">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-semibold">
+                제4단계: 개표 전광판
+              </span>
+
+              {/* Supabase Realtime Live Indicator */}
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                  isRealtimeConnected
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-sky-500/10 border-sky-500/30 text-sky-300'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                <Radio className="w-3 h-3" />
+                <span>
+                  {isRealtimeConnected
+                    ? 'Supabase 실시간 연동 중'
+                    : '실시간 로컬 동기화'}
+                </span>
+              </span>
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white">
+
+            <h2 className="text-xl sm:text-2xl font-bold text-white truncate">
               {pollTitle || '실시간 모의투표 개표 현황'}
             </h2>
             <p className="text-xs text-slate-400">
@@ -162,7 +403,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
 
         {/* 1st Place Leading Banner */}
         {leading && totalVotes > 0 && (
-          <div className="flex items-center gap-3 p-3.5 rounded-xl bg-gradient-to-r from-amber-500/15 to-orange-500/15 border border-amber-500/30 mb-5">
+          <div className="flex items-center gap-3 p-3.5 rounded-xl bg-gradient-to-r from-amber-500/15 to-orange-500/15 border border-amber-500/30 mb-4">
             <Award className="w-6 h-6 text-amber-400 shrink-0" />
             <div className="text-xs">
               <span className="font-bold text-amber-300">현재 1위 우세: </span>
@@ -178,10 +419,10 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
 
         {/* Real-time Dynamic Vote Bars (Responsive Grid for up to 10 candidates) */}
         <div
-          className={`mb-6 max-h-[52vh] overflow-y-auto pr-1 ${
+          className={`mb-5 max-h-[38vh] overflow-y-auto pr-1 ${
             displayedCandidates.length > 5
               ? 'grid grid-cols-1 sm:grid-cols-2 gap-2.5'
-              : 'space-y-3'
+              : 'space-y-2.5'
           }`}
         >
           {displayedCandidates.map((candidate, idx) => {
@@ -206,7 +447,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
             return (
               <div
                 key={candidate.id}
-                className={`${isCompact ? 'p-2.5 sm:p-3' : 'p-3.5'} rounded-xl border transition-all ${
+                className={`${isCompact ? 'p-2 sm:p-2.5' : 'p-3'} rounded-xl border transition-all ${
                   isUserChoice
                     ? 'bg-slate-800/90 border-sky-400/60 ring-1 ring-sky-400/40'
                     : 'bg-slate-800/40 border-slate-700/60'
@@ -214,7 +455,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
               >
                 <div className="flex items-center justify-between mb-1.5 gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-slate-700 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                    <span className="w-5 h-5 rounded-md bg-slate-700 flex items-center justify-center text-xs font-bold text-white shrink-0">
                       {candidate.symbolNumber}
                     </span>
                     <div className="min-w-0 truncate">
@@ -234,9 +475,9 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                 </div>
 
                 {/* Progress Track */}
-                <div className="w-full h-2.5 rounded-full bg-slate-700/70 overflow-hidden">
+                <div className="w-full h-2 rounded-full bg-slate-700/70 overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                    className={`h-full rounded-full transition-all duration-700 ease-out ${
                       barColors[idx % barColors.length]
                     }`}
                     style={{ width: `${Math.max(2, percent)}%` }}
@@ -245,6 +486,97 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
               </div>
             );
           })}
+        </div>
+
+        {/* 💬 Voter Guestbook (유권자 한마디 & 실시간 응원 방명록) */}
+        <div className="mb-5 bg-slate-850 border border-slate-700/80 rounded-xl p-3.5">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-xs sm:text-sm font-bold text-white">
+                유권자 한마디 방명록
+              </h3>
+              <span className="text-[11px] text-slate-400">({guestbook.length}개)</span>
+            </div>
+            <div className="flex items-center gap-1 text-[11px] text-slate-400">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span>실시간 소통</span>
+            </div>
+          </div>
+
+          {/* Quick Cheer Tag Chips */}
+          <div className="flex items-center gap-1.5 mb-2.5 overflow-x-auto pb-1 scrollbar-none">
+            {quickTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setCommentInput(tag);
+                }}
+                className="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700/80 text-slate-300 hover:text-white shrink-0 transition cursor-pointer"
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+
+          {/* Comment Input Form */}
+          <form onSubmit={handleCommentSubmit} className="flex gap-2 mb-3">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={commentInput}
+                onChange={(e) => setCommentInput(e.target.value)}
+                maxLength={100}
+                placeholder={`[${nickname}] 소감이나 응원을 남겨보세요 (최대 100자)`}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!commentInput.trim() || isSubmitting}
+              className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shrink-0"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{isSubmitting ? '등록 중...' : '등록'}</span>
+            </button>
+          </form>
+
+          {/* Rolling / Scrollable Comments Feed */}
+          <div
+            ref={guestbookListRef}
+            className="space-y-2 max-h-36 overflow-y-auto pr-1 text-xs"
+          >
+            {guestbook.length === 0 ? (
+              <div className="text-center py-4 text-slate-500 text-xs">
+                첫 번째 응원 한마디를 남겨보세요!
+              </div>
+            ) : (
+              guestbook.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="bg-slate-800/70 border border-slate-700/60 rounded-lg p-2.5 flex items-start justify-between gap-2 animate-in fade-in slide-in-from-top-1 duration-200"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <User className="w-3 h-3 text-sky-400" />
+                      <span className="font-bold text-slate-200 text-[11px] truncate">
+                        {entry.nickname}
+                      </span>
+                      <span className="text-[10px] text-slate-500 flex items-center gap-0.5 ml-auto">
+                        <Clock className="w-2.5 h-2.5" />
+                        {formatRelativeTime(entry.createdAt)}
+                      </span>
+                    </div>
+                    <p className="text-slate-300 text-xs break-words leading-relaxed">
+                      {entry.message}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {/* Footer Buttons */}
