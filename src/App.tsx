@@ -25,6 +25,8 @@ import {
   postGuestbookMessage,
   subscribeGuestbookRealtime,
   GuestbookMessage,
+  resetMyVote,
+  clearLocalVoteCache,
 } from './lib/voteverseBackend';
 import { getMultiplayerSessionId } from './lib/supabase';
 
@@ -35,6 +37,7 @@ import { ResultsModal } from './components/ResultsModal';
 import { CertificateModal } from './components/CertificateModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
 import { CollapsibleHUD } from './components/CollapsibleHUD';
+import { ExitModal } from './components/ExitModal';
 
 // Pre-allocated reusable vectors for zero-GC loop
 const _playerDir = new THREE.Vector3();
@@ -114,6 +117,7 @@ export default function App() {
   const [isBallotPaperOpen, setIsBallotPaperOpen] = useState<boolean>(false);
   const [isResultsOpen, setIsResultsOpen] = useState<boolean>(false);
   const [isCertificateOpen, setIsCertificateOpen] = useState<boolean>(false);
+  const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
 
   // Interaction & Nearby Detection
   const [activeZoneNear, setActiveZoneNear] = useState<StationZone | null>(null);
@@ -141,6 +145,17 @@ export default function App() {
   const isDroppingBallotRef = useRef<boolean>(false);
   const ballotDropProgressRef = useRef<number>(0);
 
+  const hasVotedRef = useRef<boolean>(false);
+  useEffect(() => {
+    hasVotedRef.current = hasVoted;
+  }, [hasVoted]);
+
+  const isExitModalOpenRef = useRef<boolean>(false);
+  useEffect(() => {
+    isExitModalOpenRef.current = isExitModalOpen;
+  }, [isExitModalOpen]);
+  const hasTouchedExitRef = useRef<boolean>(false);
+
   // Multiplayer Realtime Room & Remote Avatars Map
   const remoteAvatarsRef = useRef<
     Map<
@@ -148,8 +163,9 @@ export default function App() {
       {
         controller: CharacterController;
         nameTag: THREE.Sprite;
-        targetPos: THREE.Vector3;
-        targetRot: number;
+        targetX: number;
+        targetZ: number;
+        targetRotY: number;
         isMoving: boolean;
         lastMoveBroadcastAt?: number;
       }
@@ -158,6 +174,16 @@ export default function App() {
   const roomHandleRef = useRef<MultiplayerRoomHandle | null>(null);
   const lastBroadcastTimeRef = useRef<number>(0);
   const lastPresenceTrackTimeRef = useRef<number>(0);
+  const lastBroadcastPosRef = useRef<{ x: number; z: number; rotY: number }>({
+    x: -6.5,
+    z: 0.5,
+    rotY: Math.PI,
+  });
+  const lastPresencePosRef = useRef<{ x: number; z: number; rotY: number }>({
+    x: -6.5,
+    z: 0.5,
+    rotY: Math.PI,
+  });
   const lastSentMovingRef = useRef<boolean>(false);
 
   // Step synchronization with Environment beacon indicators
@@ -184,9 +210,12 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
     checkHasVotedVoteverse(currentPoll.id).then((already) => {
-      if (isMounted && already) {
+      if (!isMounted) return;
+      if (already) {
         setHasVoted(true);
         setCurrentStep(4);
+      } else {
+        setHasVoted(false);
       }
     });
     return () => {
@@ -199,8 +228,28 @@ export default function App() {
     const dbCandidates = await fetchPollTalliesFromDB(poll.id, base);
     if (dbCandidates) {
       setCandidates(dbCandidates);
+      const dbTotal = dbCandidates.reduce((s, c) => s + c.votes, 0);
+
+      // If DB totalVotes is 0 (DB wiped/reset), clear stale localStorage voted state so user can vote again
+      if (dbTotal === 0) {
+        let hadLocalVote = false;
+        try {
+          hadLocalVote = localStorage.getItem(`vps_user_voted_${poll.id}`) === 'true';
+        } catch {
+          hadLocalVote = false;
+        }
+        clearLocalVoteCache(poll.id);
+        if (hadLocalVote || hasVotedRef.current) {
+          setHasVoted(false);
+          setHasBallot(false);
+          setHasStamped(false);
+          setUserVoteId(null);
+          setVoteTimestamp('');
+          setCurrentStep(1);
+        }
+      }
+
       if (poll.isOfficial) {
-        const dbTotal = dbCandidates.reduce((s, c) => s + c.votes, 0);
         setOfficialChannelState((prev) => ({
           ...prev,
           activeChannelIndex: Math.floor(dbTotal / 100) + 1,
@@ -339,11 +388,10 @@ export default function App() {
             }
           }
 
-          // B. Add new remote avatars (using latest Presence coordinates for late joiners) or sync idle
-          const now = performance.now();
+          // B. Add new remote avatars AND unconditionally update targetX/targetZ/targetRotY for existing avatars
           for (const p of remotePlayers) {
-            let item = currentMap.get(p.userId);
-            if (!item) {
+            const existingEntry = currentMap.get(p.userId);
+            if (!existingEntry) {
               const controller = createProceduralAvatar(p.avatarType);
               controller.group.position.set(p.x, 0, p.z);
               controller.lookAtAngle(p.rotY);
@@ -355,28 +403,30 @@ export default function App() {
                 sceneRef.current.add(controller.group);
               }
 
-              item = {
+              currentMap.set(p.userId, {
                 controller,
                 nameTag,
-                targetPos: new THREE.Vector3(p.x, 0, p.z),
-                targetRot: p.rotY,
+                targetX: p.x,
+                targetZ: p.z,
+                targetRotY: p.rotY,
                 isMoving: Boolean(p.isMoving),
-              };
-              currentMap.set(p.userId, item);
-            } else if (!item.lastMoveBroadcastAt || now - item.lastMoveBroadcastAt > 1000) {
-              item.targetPos.set(p.x, 0, p.z);
-              item.targetRot = p.rotY;
-              item.isMoving = Boolean(p.isMoving);
+              });
+            } else {
+              existingEntry.targetX = p.x;
+              existingEntry.targetZ = p.z;
+              existingEntry.targetRotY = p.rotY;
+              existingEntry.isMoving = Boolean(p.isMoving);
             }
           }
         },
         onPlayerMove: ({ userId, x, z, rotY, isMoving }) => {
-          const item = remoteAvatarsRef.current.get(userId);
-          if (item) {
-            item.targetPos.set(x, 0, z);
-            item.targetRot = rotY;
-            item.isMoving = Boolean(isMoving);
-            item.lastMoveBroadcastAt = performance.now();
+          const entry = remoteAvatarsRef.current.get(userId);
+          if (entry) {
+            entry.targetX = x;
+            entry.targetZ = z;
+            entry.targetRotY = rotY;
+            entry.isMoving = Boolean(isMoving);
+            entry.lastMoveBroadcastAt = performance.now();
           }
         },
         onVoteCast: ({ userId, nickname: voterName }) => {
@@ -426,15 +476,11 @@ export default function App() {
     // Strict DB vote recording via castVote(currentPoll.id, selectedCandidate.id)
     const res = await castVote(currentPoll.id, selectedCandidate.id);
 
-    // Block on duplicate vote or any DB write error (never show certificate if DB failed)
+    // Block only on genuine DB write error (never show certificate if DB failed)
     if (!res.success) {
       sounds.playWarning();
       const msg = res.message || '투표 저장에 실패했습니다. 잠시 후 다시 시도해주세요.';
       showToast(msg);
-      if (res.alreadyVoted) {
-        setHasVoted(true);
-        setCurrentStep(4);
-      }
       return;
     }
 
@@ -494,6 +540,12 @@ export default function App() {
   // Handle Station Interaction
   const handleInteract = useCallback(() => {
     if (!hasEntered || isLobbyOpen) return;
+
+    if (activeZoneNear === 'exit') {
+      sounds.playClick();
+      setIsExitModalOpen(true);
+      return;
+    }
 
     // If custom poll has reached its max capacity and user hasn't voted yet, lock voting
     if (isCapacityReached && !hasVoted) {
@@ -564,7 +616,8 @@ export default function App() {
         isSignatureOpen ||
         isBallotPaperOpen ||
         isResultsOpen ||
-        isCertificateOpen
+        isCertificateOpen ||
+        isExitModalOpen
       ) {
         return;
       }
@@ -603,7 +656,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [hasEntered, isLobbyOpen, isSignatureOpen, isBallotPaperOpen, isResultsOpen, isCertificateOpen, handleInteract]);
+  }, [hasEntered, isLobbyOpen, isSignatureOpen, isBallotPaperOpen, isResultsOpen, isCertificateOpen, isExitModalOpen, handleInteract]);
 
   // Three.js Scene Setup & Render Loop (Initialized ONCE on mount to prevent light duplication)
   useEffect(() => {
@@ -800,44 +853,51 @@ export default function App() {
 
         player.update(isMoving, delta, moveSpeed);
 
-        // Throttled Broadcast + Periodic Presence track so late joiners see up-to-date positions
-        if (roomHandleRef.current) {
+        // Compare actual 3D group coordinates (keyboard OR mobile joystick) & sync via Broadcast (80ms) + Presence (250ms)
+        const room = roomHandleRef.current;
+        if (room) {
           const now = performance.now();
-          if (isMoving) {
-            if (now - lastBroadcastTimeRef.current > 85) {
-              lastBroadcastTimeRef.current = now;
-              roomHandleRef.current.sendMove(
-                player.group.position.x,
-                player.group.position.z,
-                player.group.rotation.y,
-                true
-              );
-            }
-            if (now - lastPresenceTrackTimeRef.current > 500) {
-              lastPresenceTrackTimeRef.current = now;
-              roomHandleRef.current.updatePresence(
-                player.group.position.x,
-                player.group.position.z,
-                player.group.rotation.y,
-                true
-              );
-            }
+          const curX = player.group.position.x;
+          const curZ = player.group.position.z;
+          const curRot = player.group.rotation.y;
+
+          const broadcastDist = Math.hypot(
+            curX - lastBroadcastPosRef.current.x,
+            curZ - lastBroadcastPosRef.current.z
+          );
+          const broadcastRotDiff = Math.abs(curRot - lastBroadcastPosRef.current.rotY);
+
+          const presenceDist = Math.hypot(
+            curX - lastPresencePosRef.current.x,
+            curZ - lastPresencePosRef.current.z
+          );
+          const presenceRotDiff = Math.abs(curRot - lastPresencePosRef.current.rotY);
+
+          const hasBroadcastDelta = broadcastDist >= 0.01 || broadcastRotDiff >= 0.02;
+          const hasPresenceDelta = presenceDist >= 0.01 || presenceRotDiff >= 0.02;
+
+          if (hasBroadcastDelta && now - lastBroadcastTimeRef.current >= 80) {
+            lastBroadcastTimeRef.current = now;
+            lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
+            room.sendMove(curX, curZ, curRot, isMoving);
             lastSentMovingRef.current = true;
-          } else if (lastSentMovingRef.current) {
-            lastSentMovingRef.current = false;
+          }
+
+          if (hasPresenceDelta && now - lastPresenceTrackTimeRef.current >= 250) {
             lastPresenceTrackTimeRef.current = now;
-            roomHandleRef.current.sendMove(
-              player.group.position.x,
-              player.group.position.z,
-              player.group.rotation.y,
-              false
-            );
-            roomHandleRef.current.updatePresence(
-              player.group.position.x,
-              player.group.position.z,
-              player.group.rotation.y,
-              false
-            );
+            lastPresencePosRef.current = { x: curX, z: curZ, rotY: curRot };
+            room.updatePresence(curX, curZ, curRot, isMoving);
+            lastSentMovingRef.current = true;
+          }
+
+          if (!isMoving && lastSentMovingRef.current) {
+            lastSentMovingRef.current = false;
+            lastBroadcastTimeRef.current = now;
+            lastPresenceTrackTimeRef.current = now;
+            lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
+            lastPresencePosRef.current = { x: curX, z: curZ, rotY: curRot };
+            room.sendMove(curX, curZ, curRot, false);
+            room.updatePresence(curX, curZ, curRot, false);
           }
         }
 
@@ -866,6 +926,7 @@ export default function App() {
           { zone: 'booth', position: new THREE.Vector3(0.0, 0, -3.6) },
           { zone: 'box', position: new THREE.Vector3(5.5, 0, -3.3) },
           { zone: 'billboard', position: new THREE.Vector3(6.2, 0, 1.8) },
+          { zone: 'exit', position: new THREE.Vector3(8.5, 0, 4.3) },
         ];
 
         let nearestZone: StationZone | null = null;
@@ -879,21 +940,44 @@ export default function App() {
           }
         }
         setActiveZoneNear(nearestZone);
+
+        // Trigger Exit Modal when touching the Exit glass door (X = 8.5, Z = 5.5)
+        const distToExitDoor = Math.hypot(pos.x - 8.5, pos.z - 5.5);
+        if (distToExitDoor < 1.15 && !hasTouchedExitRef.current && !isExitModalOpenRef.current) {
+          hasTouchedExitRef.current = true;
+          sounds.playClick();
+          setIsExitModalOpen(true);
+        } else if (distToExitDoor > 1.6) {
+          hasTouchedExitRef.current = false;
+        }
       }
 
-      // Update Remote Players' 3D Avatars (Smooth lerp interpolation)
-      for (const item of remoteAvatarsRef.current.values()) {
-        item.controller.group.position.lerp(item.targetPos, 0.18);
+      // Update Remote Players' 3D Avatars (Smooth lerp(0.2) interpolation + walk animation)
+      for (const entry of remoteAvatarsRef.current.values()) {
+        const dist = Math.hypot(
+          entry.targetX - entry.controller.group.position.x,
+          entry.targetZ - entry.controller.group.position.z
+        );
 
-        const curAngle = item.controller.group.rotation.y;
-        let diff = item.targetRot - curAngle;
+        entry.controller.group.position.x = THREE.MathUtils.lerp(
+          entry.controller.group.position.x,
+          entry.targetX,
+          0.2
+        );
+        entry.controller.group.position.z = THREE.MathUtils.lerp(
+          entry.controller.group.position.z,
+          entry.targetZ,
+          0.2
+        );
+
+        const curAngle = entry.controller.group.rotation.y;
+        let diff = entry.targetRotY - curAngle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        item.controller.lookAtAngle(curAngle + diff * 0.22);
+        entry.controller.lookAtAngle(curAngle + diff * 0.22);
 
-        const distSq = item.controller.group.position.distanceToSquared(item.targetPos);
-        const isRemoteMoving = item.isMoving || distSq > 0.003;
-        item.controller.update(isRemoteMoving, delta, 4.8);
+        const isRemoteMoving = dist >= 0.03;
+        entry.controller.update(isRemoteMoving, delta, 4.8);
       }
 
       // NPC Officer subtle idle breathing/head turning
@@ -1035,23 +1119,37 @@ export default function App() {
     showToast('투표용지를 소중히 접었습니다. 3번 투표함에 넣어주세요!');
   };
 
-  // Restart Simulation for current poll
-  const handleResetSimulation = () => {
+  // Re-vote / Reset for current poll (deletes user's DB vote, syncs tallies, resets state & moves avatar to Zone 1)
+  const handleResetSimulation = async () => {
     sounds.playClick();
+    const res = await resetMyVote(currentPoll.id, userVoteId || undefined);
+
     setCurrentStep(1);
     setHasBallot(false);
     setHasStamped(false);
     setHasVoted(false);
     setUserVoteId(null);
+    setVoteTimestamp('');
     setIsResultsOpen(false);
     setIsCertificateOpen(false);
+    setIsExitModalOpen(false);
 
     if (playerRef.current) {
-      playerRef.current.group.position.set(-6.5, 0, 0.5);
+      playerRef.current.group.position.set(-6.5, 0, -2.3);
       playerRef.current.lookAtAngle(Math.PI);
+      lastBroadcastPosRef.current = { x: -6.5, z: -2.3, rotY: Math.PI };
+      lastPresencePosRef.current = { x: -6.5, z: -2.3, rotY: Math.PI };
+      roomHandleRef.current?.sendMove(-6.5, -2.3, Math.PI, false);
+      roomHandleRef.current?.updatePresence(-6.5, -2.3, Math.PI, false);
     }
 
-    showToast('현재 투표소의 투표 과정이 초기화되었습니다. 1번 교부대에서 다시 시작하세요!');
+    await syncTalliesFromDB(currentPoll, currentPoll.candidates);
+
+    if (!res.success && res.error) {
+      showToast(`로컬 투표 기록을 초기화했습니다. (DB 알림: ${res.error})`);
+    } else {
+      showToast('기존 투표가 초기화되었습니다. 1번 본인확인대에서 바로 재투표를 진행하세요!');
+    }
   };
 
   const handleToggleMute = () => {
@@ -1156,32 +1254,7 @@ export default function App() {
             setIsResultsOpen(false);
             setIsCertificateOpen(true);
           }}
-          onResetVotes={() => {
-            if (currentPoll.isOfficial) {
-              try {
-                localStorage.removeItem(`vps_channels_v3_${currentPoll.id}`);
-              } catch {
-                // ignore
-              }
-              const chInfo = getActiveOfficialChannel(currentPoll.id, currentPoll.candidates);
-              setOfficialChannelState({
-                activeChannelIndex: chInfo.activeChannelIndex,
-                channelVotes: chInfo.channelVotes,
-                totalCumulativeVotes: chInfo.totalCumulativeVotes,
-                allChannels: chInfo.allChannels,
-              });
-              setCandidates(chInfo.cumulativeCandidates);
-            } else {
-              const resetCandidates = currentPoll.candidates.map((c) => ({ ...c, votes: 0 }));
-              setCandidates(resetCandidates);
-              try {
-                localStorage.removeItem(`vps_tally_v3_${currentPoll.id}`);
-              } catch {
-                // ignore
-              }
-            }
-            showToast('현재 투표소의 득표수가 0표로 초기화되었습니다.');
-          }}
+          onResetVotes={handleResetSimulation}
           onSwitchPoll={() => {
             setIsResultsOpen(false);
             setIsLobbyOpen(true);
@@ -1199,6 +1272,25 @@ export default function App() {
           timestamp={voteTimestamp || '2026년 11월 7일 14:30'}
           onClose={() => setIsCertificateOpen(false)}
           onRestart={handleResetSimulation}
+        />
+      )}
+
+      {/* 8. Exit Door Interaction Modal */}
+      {isExitModalOpen && (
+        <ExitModal
+          pollTitle={currentPoll.title}
+          hasVoted={hasVoted}
+          totalVotes={totalVotes}
+          onOpenResults={() => {
+            setIsExitModalOpen(false);
+            setIsResultsOpen(true);
+          }}
+          onOpenLobby={() => {
+            setIsExitModalOpen(false);
+            setIsLobbyOpen(true);
+          }}
+          onRevote={handleResetSimulation}
+          onClose={() => setIsExitModalOpen(false)}
         />
       )}
 

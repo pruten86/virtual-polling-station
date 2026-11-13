@@ -963,6 +963,37 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   createBeacon(5.5, -3.3, 3);  // Box beacon
   createBeacon(6.2, 1.8, 4);   // Billboard beacon
 
+  // Dedicated bright green floor interaction circle in front of '출구 EXIT ▶'
+  const exitRingGeo = new THREE.RingGeometry(0.85, 1.12, 36);
+  const exitRingMat = new THREE.MeshBasicMaterial({
+    color: 0x22c55e,
+    transparent: true,
+    opacity: 0.85,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const exitRing = new THREE.Mesh(exitRingGeo, exitRingMat);
+  exitRing.rotation.x = -Math.PI / 2;
+  exitRing.position.set(8.5, 0.032, 4.3);
+  sceneGroup.add(exitRing);
+
+  const exitDiscGeo = new THREE.CircleGeometry(0.85, 36);
+  const exitDiscMat = new THREE.MeshBasicMaterial({
+    color: 0x16a34a,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const exitDisc = new THREE.Mesh(exitDiscGeo, exitDiscMat);
+  exitDisc.rotation.x = -Math.PI / 2;
+  exitDisc.position.set(8.5, 0.03, 4.3);
+  sceneGroup.add(exitDisc);
+
   const updateBeaconActive = (currentStep: number) => {
     beaconRings.forEach(({ mesh, step }) => {
       const mat = mesh.material as THREE.MeshBasicMaterial;
@@ -984,6 +1015,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     { zone: 'booth', position: new THREE.Vector3(0.0, 0, -3.6), name: '기표소', stepNumber: 2 },
     { zone: 'box', position: new THREE.Vector3(5.5, 0, -3.3), name: '투표함', stepNumber: 3 },
     { zone: 'billboard', position: new THREE.Vector3(6.2, 0, 1.8), name: '개표 전광판', stepNumber: 4 },
+    { zone: 'exit', position: new THREE.Vector3(8.5, 0, 4.3), name: '출구 (EXIT)', stepNumber: 5 },
   ];
 
   return {

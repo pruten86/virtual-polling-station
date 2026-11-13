@@ -601,7 +601,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
             className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 font-semibold text-xs transition cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>투표 초기화</span>
+            <span>재투표하기</span>
           </button>
         </div>
 

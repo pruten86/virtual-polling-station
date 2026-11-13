@@ -80,6 +80,8 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
         return currentStep === 3 ? '투표함에 용지 넣기' : '투표함 살펴보기';
       case 'billboard':
         return '실시간 개표 결과 보기';
+      case 'exit':
+        return hasVoted ? '출구로 나가기 (개표 · 로비)' : '출구로 이동 (다른 투표소)';
       default:
         return '상호작용';
     }
@@ -369,15 +371,15 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                   {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                 </button>
 
-                {/* Reset button */}
+                {/* Reset / Re-vote button */}
                 <button
                   type="button"
                   onClick={onReset}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer"
-                  title="체험 처음부터 다시하기"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+                  title="현재 투표소 재투표하기"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">다시하기</span>
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                  <span>재투표하기</span>
                 </button>
               </div>
             </div>

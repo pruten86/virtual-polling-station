@@ -12,7 +12,7 @@ export interface Candidate {
   votes: number;
 }
 
-export type StationZone = 'desk' | 'booth' | 'box' | 'billboard';
+export type StationZone = 'desk' | 'booth' | 'box' | 'billboard' | 'exit';
 
 export interface PollChannelData {
   channelIndex: number;

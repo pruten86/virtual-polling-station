@@ -256,7 +256,7 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
             className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-            <span>새로운 투표 체험</span>
+            <span>재투표하기</span>
           </button>
         </div>
 

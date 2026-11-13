@@ -39,7 +39,7 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
       },
       realtime: {
         params: {
-          eventsPerSecond: 10,
+          eventsPerSecond: 25,
         },
       },
     })
