@@ -23,6 +23,10 @@ import {
   checkHasVotedVoteverse,
   joinMultiplayerRoom,
   MultiplayerRoomHandle,
+  fetchGuestbook,
+  postGuestbookMessage,
+  subscribeGuestbookRealtime,
+  GuestbookMessage,
 } from './lib/voteverseBackend';
 
 import { AvatarSelectModal } from './components/AvatarSelectModal';
@@ -117,6 +121,8 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [onlineCount, setOnlineCount] = useState<number>(1);
+  const [guestbookMessages, setGuestbookMessages] = useState<GuestbookMessage[]>([]);
+  const [isGuestbookLoading, setIsGuestbookLoading] = useState<boolean>(false);
 
   // Persistent unique identifier for local user in Realtime Room
   const myUserId = useRef<string>(getVoterUUID()).current;
@@ -197,6 +203,53 @@ export default function App() {
       unsubscribe();
     };
   }, [currentPoll.id, hasEntered, isResultsOpen]);
+
+  // Guestbook DB load & Supabase Realtime INSERT subscription
+  useEffect(() => {
+    if (!hasEntered && !isResultsOpen) return;
+
+    let isMounted = true;
+    setIsGuestbookLoading(true);
+
+    fetchGuestbook(currentPoll.id)
+      .then((entries) => {
+        if (isMounted) {
+          setGuestbookMessages(entries);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsGuestbookLoading(false);
+        }
+      });
+
+    const unsubscribeGuestbook = subscribeGuestbookRealtime(currentPoll.id, (newEntry) => {
+      if (!isMounted) return;
+      setGuestbookMessages((prev) => {
+        if (prev.some((e) => e.id === newEntry.id)) return prev;
+        return [newEntry, ...prev].slice(0, 100);
+      });
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeGuestbook();
+    };
+  }, [currentPoll.id, hasEntered, isResultsOpen]);
+
+  const handlePostGuestbook = useCallback(
+    async (message: string): Promise<{ success: boolean; error?: string }> => {
+      const res = await postGuestbookMessage(currentPoll.id, nickname, message);
+      if (res.success && res.data) {
+        setGuestbookMessages((prev) => [
+          res.data!,
+          ...prev.filter((item) => item.id !== res.data!.id),
+        ]);
+      }
+      return { success: res.success, error: res.error };
+    },
+    [currentPoll.id, nickname]
+  );
 
   // Sync billboard & banner with latest candidate tallies and poll title
   useEffect(() => {
@@ -1054,6 +1107,9 @@ export default function App() {
           allChannels={officialChannelState.allChannels}
           activeChannelIndex={officialChannelState.activeChannelIndex}
           onRealtimeCandidateUpdate={(updated) => setCandidates(updated)}
+          guestbookMessages={guestbookMessages}
+          isGuestbookLoading={isGuestbookLoading}
+          onPostGuestbook={handlePostGuestbook}
           onOpenCertificate={() => {
             setIsResultsOpen(false);
             setIsCertificateOpen(true);

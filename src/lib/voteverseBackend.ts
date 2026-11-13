@@ -761,3 +761,170 @@ export function joinMultiplayerRoom(
   };
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * Guestbook DB & Realtime Integration (public.guestbook)
+ * ---------------------------------------------------------------------------
+ */
+export interface GuestbookMessage {
+  id: string;
+  poll_id: string;
+  user_id?: string;
+  display_name: string;
+  message: string;
+  created_at: string;
+}
+
+/**
+ * Fetch guestbook entries from public.guestbook ordered by created_at DESC
+ */
+export async function fetchGuestbook(pollId: string): Promise<GuestbookMessage[]> {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('guestbook')
+      .select('id, poll_id, display_name, message, created_at')
+      .eq('poll_id', pollId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.warn('[fetchGuestbook error]', error.message);
+      return [];
+    }
+
+    if (!data) return [];
+
+    return data.map((row: any) => ({
+      id: String(row.id),
+      poll_id: row.poll_id || pollId,
+      display_name: row.display_name || '선거인',
+      message: row.message || '',
+      created_at: row.created_at || new Date().toISOString(),
+    }));
+  } catch (err) {
+    console.warn('[fetchGuestbook exception]', err);
+    return [];
+  }
+}
+
+/**
+ * Post a new guestbook entry to public.guestbook after ensuring anonymous auth
+ */
+export async function postGuestbookMessage(
+  pollId: string,
+  displayName: string,
+  message: string
+): Promise<{ success: boolean; data?: GuestbookMessage; error?: string }> {
+  const trimmedMsg = message.trim();
+  const trimmedName = (displayName || '선거인').trim();
+  if (!trimmedMsg) {
+    return { success: false, error: '내용을 입력해 주세요.' };
+  }
+
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, error: 'Supabase DB가 연결되어 있지 않습니다.' };
+  }
+
+  try {
+    let userId = await ensureAnonymousAuth();
+    if (!userId) {
+      const { data: userData } = await supabase.auth.getUser();
+      userId = userData?.user?.id || null;
+    }
+
+    if (!userId) {
+      return { success: false, error: '익명 인증 세션을 확인할 수 없습니다.' };
+    }
+
+    const { data, error } = await supabase
+      .from('guestbook')
+      .insert([
+        {
+          poll_id: pollId,
+          user_id: userId,
+          display_name: trimmedName,
+          message: trimmedMsg,
+        },
+      ])
+      .select('id, poll_id, user_id, display_name, message, created_at')
+      .single();
+
+    if (error) {
+      console.warn('[postGuestbookMessage insert error]', error.message);
+      return { success: false, error: error.message };
+    }
+
+    const created: GuestbookMessage = data
+      ? {
+          id: String(data.id),
+          poll_id: data.poll_id || pollId,
+          user_id: data.user_id || userId,
+          display_name: data.display_name || trimmedName,
+          message: data.message || trimmedMsg,
+          created_at: data.created_at || new Date().toISOString(),
+        }
+      : {
+          id: 'gb_' + Date.now().toString(36),
+          poll_id: pollId,
+          user_id: userId,
+          display_name: trimmedName,
+          message: trimmedMsg,
+          created_at: new Date().toISOString(),
+        };
+
+    return { success: true, data: created };
+  } catch (err: any) {
+    console.warn('[postGuestbookMessage exception]', err);
+    return { success: false, error: err?.message || '방명록 등록 중 오류가 발생했습니다.' };
+  }
+}
+
+/**
+ * Subscribe to real-time INSERT events on public.guestbook for a specific poll
+ */
+export function subscribeGuestbookRealtime(
+  pollId: string,
+  onNewMessage: (entry: GuestbookMessage) => void
+): () => void {
+  if (!isSupabaseConfigured || !supabase) {
+    return () => {};
+  }
+
+  const channelName = `realtime_guestbook_${pollId}_${Math.random().toString(36).substring(2, 7)}`;
+  const channel = supabase.channel(channelName);
+
+  channel
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'guestbook',
+        filter: `poll_id=eq.${pollId}`,
+      },
+      (payload: any) => {
+        const row = payload.new;
+        if (row && row.id && (!row.poll_id || row.poll_id === pollId)) {
+          onNewMessage({
+            id: String(row.id),
+            poll_id: row.poll_id || pollId,
+            user_id: row.user_id,
+            display_name: row.display_name || '선거인',
+            message: row.message || '',
+            created_at: row.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase?.removeChannel(channel);
+  };
+}
+
+

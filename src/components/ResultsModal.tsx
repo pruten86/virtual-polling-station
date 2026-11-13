@@ -16,16 +16,17 @@ import {
   Clock,
   User,
 } from 'lucide-react';
-import {
-  BETA_DISCLAIMER_TEXT,
-  fetchGuestbookAsync,
-  addGuestbookAsync,
-} from '../data/presetPolls';
+import { BETA_DISCLAIMER_TEXT } from '../data/presetPolls';
 import {
   supabase,
   isSupabaseConfigured,
-  GuestbookEntry,
 } from '../lib/supabase';
+import {
+  fetchGuestbook,
+  postGuestbookMessage,
+  subscribeGuestbookRealtime,
+  GuestbookMessage,
+} from '../lib/voteverseBackend';
 
 interface ResultsModalProps {
   candidates: Candidate[];
@@ -42,6 +43,9 @@ interface ResultsModalProps {
   allChannels?: PollChannelData[];
   activeChannelIndex?: number;
   onRealtimeCandidateUpdate?: (updatedCandidates: Candidate[]) => void;
+  guestbookMessages?: GuestbookMessage[];
+  isGuestbookLoading?: boolean;
+  onPostGuestbook?: (message: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const ResultsModal: React.FC<ResultsModalProps> = ({
@@ -59,6 +63,9 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   allChannels = [],
   activeChannelIndex = 1,
   onRealtimeCandidateUpdate,
+  guestbookMessages,
+  isGuestbookLoading,
+  onPostGuestbook,
 }) => {
   // View mode for official polls: 'cumulative' or channel index number (1, 2, 3...)
   const [selectedChannelView, setSelectedChannelView] = useState<'cumulative' | number>('cumulative');
@@ -66,32 +73,57 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   // Realtime Candidate Tallies state synced with parent
   const [liveCandidates, setLiveCandidates] = useState<Candidate[]>(candidates);
 
-  // Guestbook state
-  const [guestbook, setGuestbook] = useState<GuestbookEntry[]>([]);
+  // Guestbook state (uses parent App state when provided, or standalone DB state)
+  const [internalGuestbook, setInternalGuestbook] = useState<GuestbookMessage[]>([]);
+  const [internalLoading, setInternalLoading] = useState<boolean>(false);
   const [commentInput, setCommentInput] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [guestbookError, setGuestbookError] = useState<string | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(isSupabaseConfigured);
   const guestbookListRef = useRef<HTMLDivElement | null>(null);
+
+  const isManagedByParent = guestbookMessages !== undefined;
+  const guestbook = isManagedByParent ? guestbookMessages : internalGuestbook;
+  const loadingGuestbook = isGuestbookLoading !== undefined ? isGuestbookLoading : internalLoading;
 
   // Sync with prop updates
   useEffect(() => {
     setLiveCandidates(candidates);
   }, [candidates]);
 
-  // Load initial guestbook comments
+  // Load initial guestbook comments & subscribe if not managed by parent App
   useEffect(() => {
+    if (isManagedByParent) return;
+
     let isMounted = true;
-    fetchGuestbookAsync(pollId).then((entries) => {
-      if (isMounted) {
-        setGuestbook(entries);
-      }
+    setInternalLoading(true);
+    fetchGuestbook(pollId)
+      .then((entries) => {
+        if (isMounted) {
+          setInternalGuestbook(entries);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setInternalLoading(false);
+        }
+      });
+
+    const unsubscribe = subscribeGuestbookRealtime(pollId, (newEntry) => {
+      if (!isMounted) return;
+      setInternalGuestbook((prev) => {
+        if (prev.some((e) => e.id === newEntry.id)) return prev;
+        return [newEntry, ...prev].slice(0, 100);
+      });
     });
+
     return () => {
       isMounted = false;
+      unsubscribe();
     };
-  }, [pollId]);
+  }, [pollId, isManagedByParent]);
 
-  // Supabase Realtime Subscription for votes & guestbook
+  // Supabase Realtime Subscription for poll_options votes
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
       setIsRealtimeConnected(false);
@@ -152,33 +184,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
           }
         }
       )
-      // 2. Listen for new guestbook entries
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'guestbook',
-          filter: `poll_id=eq.${pollId}`,
-        },
-        (payload: any) => {
-          const row = payload.new;
-          if (row) {
-            const entry: GuestbookEntry = {
-              id: String(row.id),
-              pollId: row.poll_id,
-              nickname: row.nickname,
-              message: row.message,
-              createdAt: row.created_at,
-            };
-            setGuestbook((prev) => {
-              if (prev.some((e) => e.id === entry.id)) return prev;
-              return [entry, ...prev].slice(0, 50);
-            });
-          }
-        }
-      )
-      // 3. Broadcast channels for instant peer-to-peer reflection
+      // 2. Broadcast channel for instant peer-to-peer vote reflection
       .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
         if (payload && payload.candidateId) {
           setLiveCandidates((prev) => {
@@ -189,14 +195,6 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
               onRealtimeCandidateUpdate(next);
             }
             return next;
-          });
-        }
-      })
-      .on('broadcast', { event: 'guestbook_entry' }, ({ payload }: any) => {
-        if (payload && payload.entry) {
-          setGuestbook((prev) => {
-            if (prev.some((e) => e.id === payload.entry.id)) return prev;
-            return [payload.entry, ...prev].slice(0, 50);
           });
         }
       })
@@ -211,30 +209,39 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
     };
   }, [pollId, onRealtimeCandidateUpdate]);
 
-  // Handle Guestbook comment submission
+  // Handle Guestbook comment submission via DB
   const handleCommentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = commentInput.trim();
     if (!trimmed || isSubmitting) return;
 
     setIsSubmitting(true);
+    setGuestbookError(null);
     sounds.playClick();
 
     try {
-      const added = await addGuestbookAsync(pollId, nickname, trimmed);
-      setGuestbook((prev) => [added, ...prev.filter((item) => item.id !== added.id)]);
-      setCommentInput('');
-
-      // Broadcast to other peers if Supabase is active
-      if (isSupabaseConfigured && supabase) {
-        supabase.channel(`realtime_poll_${pollId}`).send({
-          type: 'broadcast',
-          event: 'guestbook_entry',
-          payload: { entry: added },
-        });
+      if (onPostGuestbook) {
+        const res = await onPostGuestbook(trimmed);
+        if (res.success) {
+          setCommentInput('');
+        } else {
+          setGuestbookError(res.error || '방명록 등록에 실패했습니다.');
+        }
+      } else {
+        const res = await postGuestbookMessage(pollId, nickname, trimmed);
+        if (res.success && res.data) {
+          setInternalGuestbook((prev) => [
+            res.data!,
+            ...prev.filter((item) => item.id !== res.data!.id),
+          ]);
+          setCommentInput('');
+        } else {
+          setGuestbookError(res.error || '방명록 등록에 실패했습니다.');
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to post comment', err);
+      setGuestbookError(err?.message || '방명록 등록 중 오류가 발생했습니다.');
     } finally {
       setIsSubmitting(false);
     }
@@ -522,12 +529,15 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
           </div>
 
           {/* Comment Input Form */}
-          <form onSubmit={handleCommentSubmit} className="flex gap-2 mb-3">
+          <form onSubmit={handleCommentSubmit} className="flex gap-2 mb-2">
             <div className="relative flex-1">
               <input
                 type="text"
                 value={commentInput}
-                onChange={(e) => setCommentInput(e.target.value)}
+                onChange={(e) => {
+                  setCommentInput(e.target.value);
+                  if (guestbookError) setGuestbookError(null);
+                }}
                 maxLength={100}
                 placeholder={`[${nickname}] 소감이나 응원을 남겨보세요 (최대 100자)`}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
@@ -543,12 +553,22 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
             </button>
           </form>
 
+          {guestbookError && (
+            <div className="mb-2 px-2.5 py-1.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[11px]">
+              {guestbookError}
+            </div>
+          )}
+
           {/* Rolling / Scrollable Comments Feed */}
           <div
             ref={guestbookListRef}
-            className="space-y-2 max-h-36 overflow-y-auto pr-1 text-xs"
+            className="space-y-2 max-h-36 overflow-y-auto pr-1 text-xs mt-1"
           >
-            {guestbook.length === 0 ? (
+            {loadingGuestbook && guestbook.length === 0 ? (
+              <div className="text-center py-4 text-slate-400 text-xs">
+                방명록을 불러오는 중입니다...
+              </div>
+            ) : guestbook.length === 0 ? (
               <div className="text-center py-4 text-slate-500 text-xs">
                 첫 번째 응원 한마디를 남겨보세요!
               </div>
@@ -562,11 +582,11 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <User className="w-3 h-3 text-sky-400" />
                       <span className="font-bold text-slate-200 text-[11px] truncate">
-                        {entry.nickname}
+                        {entry.display_name}
                       </span>
                       <span className="text-[10px] text-slate-500 flex items-center gap-0.5 ml-auto">
                         <Clock className="w-2.5 h-2.5" />
-                        {formatRelativeTime(entry.createdAt)}
+                        {formatRelativeTime(entry.created_at)}
                       </span>
                     </div>
                     <p className="text-slate-300 text-xs break-words leading-relaxed">
