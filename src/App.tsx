@@ -26,6 +26,7 @@ import {
   subscribeGuestbookRealtime,
   GuestbookMessage,
 } from './lib/voteverseBackend';
+import { getMultiplayerSessionId } from './lib/supabase';
 
 import { AvatarSelectModal } from './components/AvatarSelectModal';
 import { SignatureModal } from './components/SignatureModal';
@@ -122,8 +123,10 @@ export default function App() {
   const [guestbookMessages, setGuestbookMessages] = useState<GuestbookMessage[]>([]);
   const [isGuestbookLoading, setIsGuestbookLoading] = useState<boolean>(false);
 
-  // Supabase authenticated anonymous user ID (unified across voting, guestbook, and multiplayer)
+  // Supabase authenticated anonymous user ID (pre-warmed for DB voting/guestbook)
   const [authUserId, setAuthUserId] = useState<string | null>(null);
+  // Per-tab unique ID via sessionStorage so multiple tabs/windows & cross-device users always show as distinct 3D avatars
+  const multiplayerPeerId = useRef<string>(getMultiplayerSessionId()).current;
 
   // Mutable refs for Three.js engine and input
   const playerRef = useRef<CharacterController | null>(null);
@@ -305,14 +308,14 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection (using authUserId)
+  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection (using per-tab multiplayerPeerId)
   useEffect(() => {
-    if (!hasEntered || !authUserId) return;
+    if (!hasEntered) return;
 
     const room = joinMultiplayerRoom(
       currentPoll.id,
       {
-        userId: authUserId,
+        userId: multiplayerPeerId,
         nickname,
         avatarType,
         x: playerRef.current ? playerRef.current.group.position.x : -6.5,
@@ -378,7 +381,7 @@ export default function App() {
         },
         onVoteCast: ({ userId, nickname: voterName }) => {
           // Toast notification ONLY - do NOT locally increment candidate tallies here
-          if (userId !== authUserId) {
+          if (userId !== multiplayerPeerId) {
             sounds.playChime();
             showToast(`🗳️ [${voterName}]님이 소중한 한 표를 행사했습니다!`);
           }
@@ -401,7 +404,7 @@ export default function App() {
       remoteAvatarsRef.current.clear();
       setOnlineCount(1);
     };
-  }, [hasEntered, currentPoll.id, nickname, avatarType, authUserId, showToast]);
+  }, [hasEntered, currentPoll.id, nickname, avatarType, multiplayerPeerId, showToast]);
 
   const totalVotes = candidates.reduce((s, c) => s + c.votes, 0);
   const maxCapacity = currentPoll.maxVoters || 100;

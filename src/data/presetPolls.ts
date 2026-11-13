@@ -812,7 +812,7 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
         }
         optionsMap[opt.poll_id].push({
           id: opt.id,
-          symbolNumber: opt.symbol_number,
+          symbolNumber: Number(opt.symbol_number ?? opt.sort_order) || 1,
           party: opt.party || '',
           title: opt.title,
           subtitle: opt.subtitle || '',
@@ -890,6 +890,7 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
         id: c.id,
         poll_id: poll.id,
         symbol_number: c.symbolNumber,
+        sort_order: c.symbolNumber,
         party: c.party,
         title: c.title,
         subtitle: c.subtitle,
