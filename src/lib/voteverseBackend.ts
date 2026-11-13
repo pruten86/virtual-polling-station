@@ -1,12 +1,10 @@
-import { supabase, isSupabaseConfigured, getVoterUUID, ensureAnonymousAuth } from './supabase';
+import { supabase, isSupabaseConfigured, ensureAnonymousAuth } from './supabase';
 export { ensureAnonymousAuth };
 import { PollStation, Candidate, PollChannelData } from '../types';
 import {
   PRESET_POLLS,
   getAllPolls,
   savePoll,
-  recordOfficialVote,
-  recordPollVote,
 } from '../data/presetPolls';
 
 const STORAGE_KEY_VOTED_PREFIX = 'vps_user_voted_';
@@ -30,10 +28,10 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
   }
 
   try {
-    // Fetch polls that are not private (public or official)
+    // Fetch public/official polls using only actual DB columns (no is_official, access_code, admin_pin)
     const { data: pollsData, error: pollsError } = await supabase
       .from('polls')
-      .select('*')
+      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
       .neq('category', 'private')
       .order('created_at', { ascending: false });
 
@@ -67,21 +65,23 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       });
     }
 
+    const officialPresetIds = new Set(PRESET_POLLS.filter((p) => p.isOfficial).map((p) => p.id));
+
     const remotePolls: PollStation[] = pollsData.map((row: any) => {
       const candidates = (optionsMap[row.id] || []).sort(
         (a, b) => a.symbolNumber - b.symbolNumber
       );
+      const pollIdStr = String(row.id);
+      const isOfficial = officialPresetIds.has(pollIdStr) || row.category === 'official';
       return {
-        id: String(row.id),
+        id: pollIdStr,
         title: row.title,
         description: row.description || '',
         category: row.category || 'public',
-        accessCode: row.access_code || undefined,
-        adminPin: row.admin_pin || undefined,
         maxVoters: Number(row.max_voters) || 100,
         createdAt: row.created_at ? row.created_at.split('T')[0] : '2026-11-11',
-        isOfficial: Boolean(row.is_official),
-        isCustom: !row.is_official,
+        isOfficial,
+        isCustom: !isOfficial,
         durationHours: Number(row.duration_hours) || 24,
         expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : undefined,
         candidates: candidates.length > 0 ? candidates : PRESET_POLLS[0].candidates,
@@ -105,101 +105,144 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
 }
 
 /**
- * 2. Create new poll via supabase.rpc('create_voteverse_poll', { p_poll: pollData })
+ * Fetch authoritative candidate vote counts from Supabase poll_options table
  */
-export async function createVoteversePoll(pollData: PollStation): Promise<{ success: boolean; error?: string }> {
-  // Always persist locally first so experience is immediately responsive
-  savePoll(pollData);
-
+export async function fetchPollTalliesFromDB(
+  pollId: string,
+  baseCandidates: Candidate[]
+): Promise<Candidate[] | null> {
   if (!isSupabaseConfigured || !supabase) {
-    return { success: true };
+    return null;
   }
 
-  const p_poll_payload = {
+  try {
+    const { data, error } = await supabase
+      .from('poll_options')
+      .select('id, vote_count')
+      .eq('poll_id', pollId);
+
+    if (error || !data) {
+      return null;
+    }
+
+    const countsMap = new Map<string, number>();
+    data.forEach((row: any) => {
+      countsMap.set(String(row.id), Number(row.vote_count) || 0);
+    });
+
+    return baseCandidates.map((c) => ({
+      ...c,
+      votes: countsMap.has(c.id) ? countsMap.get(c.id)! : c.votes,
+    }));
+  } catch (err) {
+    console.warn('[fetchPollTalliesFromDB error]', err);
+    return null;
+  }
+}
+
+/**
+ * 2. Create new poll strictly persisted to Supabase DB
+ */
+export async function createVoteversePoll(pollData: PollStation): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, error: 'Supabase 데이터베이스가 연결되어 있지 않습니다.' };
+  }
+
+  const userId = await ensureAnonymousAuth();
+  if (!userId) {
+    return { success: false, error: '익명 인증 세션을 확인할 수 없어 투표소를 생성할 수 없습니다.' };
+  }
+
+  const p_poll_payload: Record<string, any> = {
     id: pollData.id,
     title: pollData.title,
     description: pollData.description,
     category: pollData.category || 'public',
-    access_code: pollData.accessCode || null,
-    admin_pin: pollData.adminPin || null,
     max_voters: pollData.maxVoters,
-    is_official: Boolean(pollData.isOfficial),
     duration_hours: pollData.durationHours || 24,
     expires_at: pollData.expiresAt ? new Date(pollData.expiresAt).toISOString() : null,
     candidates: pollData.candidates.map((c) => ({
       id: c.id,
       symbol_number: c.symbolNumber,
-      symbolNumber: c.symbolNumber,
       party: c.party,
       title: c.title,
       subtitle: c.subtitle,
       badge_color: c.badgeColor,
-      badgeColor: c.badgeColor,
       accent_bg: c.accentBg,
-      accentBg: c.accentBg,
-      description: c.description,
       vote_count: c.votes || 0,
-      votes: c.votes || 0,
     })),
   };
 
+  if (pollData.accessCode) {
+    p_poll_payload.access_code = pollData.accessCode;
+  }
+  if (pollData.adminPin) {
+    p_poll_payload.admin_pin = pollData.adminPin;
+  }
+
   try {
-    // 1. Primary: Call Supabase RPC as specified in spec
+    // 1. Primary: Call Supabase RPC
     const { data, error } = await supabase.rpc('create_voteverse_poll', {
       p_poll: p_poll_payload,
     });
 
     if (!error) {
       console.log('[create_voteverse_poll RPC success]', data);
+      savePoll(pollData);
       return { success: true };
     }
 
-    console.warn('[create_voteverse_poll RPC returned error, attempting direct table insert fallback]', error.message);
+    // If RPC function is not deployed in schema cache, try direct table insert using valid columns only
+    if (error.code === 'PGRST202' || (error.message || '').includes('Could not find the function')) {
+      const { error: pollError } = await supabase.from('polls').upsert([
+        {
+          id: pollData.id,
+          title: pollData.title,
+          description: pollData.description,
+          category: pollData.category,
+          max_voters: pollData.maxVoters,
+          duration_hours: pollData.durationHours || 24,
+          expires_at: pollData.expiresAt ? new Date(pollData.expiresAt).toISOString() : null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
 
-    // 2. Resilient fallback: direct tables upsert
-    await supabase.from('polls').upsert([
-      {
-        id: pollData.id,
-        title: pollData.title,
-        description: pollData.description,
-        category: pollData.category,
-        access_code: pollData.accessCode || null,
-        admin_pin: pollData.adminPin || null,
-        max_voters: pollData.maxVoters,
-        is_official: Boolean(pollData.isOfficial),
-        duration_hours: pollData.durationHours || 24,
-        expires_at: pollData.expiresAt ? new Date(pollData.expiresAt).toISOString() : null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
+      if (pollError) {
+        return { success: false, error: `투표소 DB 저장 실패: ${pollError.message}` };
+      }
 
-    const optionRows = pollData.candidates.map((c) => ({
-      id: c.id,
-      poll_id: pollData.id,
-      symbol_number: c.symbolNumber,
-      party: c.party,
-      title: c.title,
-      subtitle: c.subtitle,
-      badge_color: c.badgeColor,
-      accent_bg: c.accentBg,
-      vote_count: c.votes || 0,
-    }));
+      const optionRows = pollData.candidates.map((c) => ({
+        id: c.id,
+        poll_id: pollData.id,
+        symbol_number: c.symbolNumber,
+        party: c.party,
+        title: c.title,
+        subtitle: c.subtitle,
+        badge_color: c.badgeColor,
+        accent_bg: c.accentBg,
+        vote_count: c.votes || 0,
+      }));
 
-    await supabase.from('poll_options').upsert(optionRows);
+      const { error: optError } = await supabase.from('poll_options').upsert(optionRows);
+      if (optError) {
+        return { success: false, error: `후보자 DB 저장 실패: ${optError.message}` };
+      }
 
-    return { success: true };
+      savePoll(pollData);
+      return { success: true };
+    }
+
+    return { success: false, error: error.message || '투표소 생성 DB 저장에 실패했습니다.' };
   } catch (err: any) {
     console.warn('[createVoteversePoll error]', err);
-    return { success: false, error: err?.message || 'Failed to create poll' };
+    return { success: false, error: err?.message || '투표소 생성 중 네트워크 오류가 발생했습니다.' };
   }
 }
 
 /**
- * Check if current user or browser has already voted for this poll
+ * Check if current authenticated user has already voted for this poll (using votes.voter_id)
  */
 export async function checkHasVotedVoteverse(pollId: string): Promise<boolean> {
-  const voterUuid = getVoterUUID();
-
   // 1. Check local storage cache
   try {
     if (localStorage.getItem(STORAGE_KEY_VOTED_PREFIX + pollId) === 'true') {
@@ -209,21 +252,19 @@ export async function checkHasVotedVoteverse(pollId: string): Promise<boolean> {
     // ignore
   }
 
-  // 2. Query Supabase votes table
+  // 2. Query Supabase votes table using voter_id = authenticated user.id
   if (isSupabaseConfigured && supabase) {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData?.session?.user?.id;
+      const userId = await ensureAnonymousAuth();
+      if (!userId) return false;
 
-      let query = supabase.from('votes').select('id').eq('poll_id', pollId).limit(1);
+      const { data, error } = await supabase
+        .from('votes')
+        .select('id')
+        .eq('poll_id', pollId)
+        .eq('voter_id', userId)
+        .limit(1);
 
-      if (userId) {
-        query = query.or(`voter_uuid.eq.${voterUuid},user_id.eq.${userId}`);
-      } else {
-        query = query.eq('voter_uuid', voterUuid);
-      }
-
-      const { data, error } = await query;
       if (!error && data && data.length > 0) {
         try {
           localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
@@ -248,7 +289,7 @@ export async function castVoteverseVote(
   pollId: string,
   optionId: string,
   currentCandidates: Candidate[],
-  isOfficial: boolean
+  _isOfficial: boolean
 ): Promise<{
   success: boolean;
   alreadyVoted?: boolean;
@@ -261,150 +302,49 @@ export async function castVoteverseVote(
     allChannels: PollChannelData[];
   };
 }> {
-  // Check local double-voting check first
-  const already = await checkHasVotedVoteverse(pollId);
-  if (already) {
+  const res = await castVote(pollId, optionId);
+  if (!res.success) {
     return {
       success: false,
-      alreadyVoted: true,
-      message: '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)',
+      alreadyVoted: res.alreadyVoted,
+      message: res.message,
       updatedCandidates: currentCandidates,
     };
   }
 
-  // Compute updated candidate counts in memory/local
-  let updatedCandidates: Candidate[] = [];
-  let officialState: {
-    activeChannelIndex: number;
-    channelVotes: number;
-    totalCumulativeVotes: number;
-    allChannels: PollChannelData[];
-  } | undefined;
-
-  if (isOfficial) {
-    const res = recordOfficialVote(pollId, optionId, currentCandidates);
-    updatedCandidates = res.cumulativeCandidates;
-    officialState = {
-      activeChannelIndex: res.activeChannelIndex,
-      channelVotes: res.activeChannelVotes,
-      totalCumulativeVotes: res.totalCumulativeVotes,
-      allChannels: res.allChannels,
-    };
-  } else {
-    updatedCandidates = recordPollVote(pollId, optionId, currentCandidates);
-  }
-
-  // If Supabase is configured, execute RPC
-  if (isSupabaseConfigured && supabase) {
-    try {
-      // 1. Primary: Call the specified RPC
-      const { data, error } = await supabase.rpc('cast_voteverse_vote', {
-        p_poll_id: pollId,
-        p_option_id: optionId,
-      });
-
-      if (error) {
-        const errorText = (error.message || '') + (error.details || '') + (error.code || '');
-        // Check for duplicate voting violation: votes_one_per_user_per_poll or unique constraint (23505)
-        const isDuplicateViolation =
-          errorText.includes('votes_one_per_user_per_poll') ||
-          errorText.includes('23505') ||
-          errorText.includes('duplicate key') ||
-          errorText.includes('unique') ||
-          errorText.includes('already voted');
-
-        if (isDuplicateViolation) {
-          try {
-            localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-          } catch {
-            // ignore
-          }
-          return {
-            success: false,
-            alreadyVoted: true,
-            message: '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)',
-            updatedCandidates: currentCandidates,
-          };
-        }
-
-        console.warn('[cast_voteverse_vote RPC fallback]', error.message);
-
-        // Fallback: direct table insert with voter UUID and auth user ID
-        const voterUuid = getVoterUUID();
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData?.session?.user?.id;
-
-        const { error: insertError } = await supabase.from('votes').insert([
-          {
-            poll_id: pollId,
-            option_id: optionId,
-            voter_uuid: voterUuid,
-            ...(userId ? { user_id: userId } : {}),
-          },
-        ]);
-
-        if (insertError) {
-          const insertMsg = insertError.message || '';
-          if (
-            insertMsg.includes('votes_one_per_user_per_poll') ||
-            insertMsg.includes('23505') ||
-            insertMsg.includes('duplicate key')
-          ) {
-            try {
-              localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-            } catch {
-              // ignore
-            }
-            return {
-              success: false,
-              alreadyVoted: true,
-              message: '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)',
-              updatedCandidates: currentCandidates,
-            };
-          }
-        }
-
-        // Increment poll_options count
-        const target = updatedCandidates.find((c) => c.id === optionId);
-        if (target) {
-          await supabase
-            .from('poll_options')
-            .update({ vote_count: target.votes })
-            .eq('poll_id', pollId)
-            .eq('id', optionId);
-        }
-      } else {
-        console.log('[cast_voteverse_vote RPC success]', data);
-      }
-    } catch (err: any) {
-      console.warn('[castVoteverseVote error, retained local state]', err);
-    }
-  }
-
-  // Mark local voted flag
-  try {
-    localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-  } catch {
-    // ignore
-  }
-
+  const fresh = (await fetchPollTalliesFromDB(pollId, currentCandidates)) || currentCandidates;
   return {
     success: true,
     alreadyVoted: false,
-    updatedCandidates,
-    officialState,
+    updatedCandidates: fresh,
   };
 }
 
 /**
- * Standard castVote helper: calls cast_voteverse_vote RPC
- * Returns message and duplicate flag for UI handling
+ * Strict castVote helper: calls cast_voteverse_vote RPC and ONLY returns success
+ * when the vote is genuinely recorded in Supabase DB (no fake offline success fallback)
  */
 export async function castVote(
   pollId: string,
   candidateId: string
 ): Promise<{ success: boolean; message: string; alreadyVoted?: boolean }> {
-  // 1. Check double voting constraint locally & DB
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      success: false,
+      message: 'Supabase 데이터베이스가 연결되지 않아 투표를 기록할 수 없습니다.',
+    };
+  }
+
+  // 1. Ensure anonymous auth session (provides auth.uid() for voter_id)
+  const userId = await ensureAnonymousAuth();
+  if (!userId) {
+    return {
+      success: false,
+      message: '익명 인증 세션을 확인할 수 없습니다. 잠시 후 다시 시도해주세요.',
+    };
+  }
+
+  // 2. Check double voting constraint
   const already = await checkHasVotedVoteverse(pollId);
   if (already) {
     return {
@@ -414,56 +354,51 @@ export async function castVote(
     };
   }
 
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { data, error } = await supabase.rpc('cast_voteverse_vote', {
-        p_poll_id: pollId,
-        p_option_id: candidateId,
-      });
+  try {
+    const { data, error } = await supabase.rpc('cast_voteverse_vote', {
+      p_poll_id: pollId,
+      p_option_id: candidateId,
+    });
 
-      if (error) {
-        const errorText = (error.message || '') + (error.details || '') + (error.code || '');
-        const isDuplicateViolation =
-          errorText.includes('votes_one_per_user_per_poll') ||
-          errorText.includes('23505') ||
-          errorText.includes('duplicate key') ||
-          errorText.includes('unique') ||
-          errorText.includes('already voted');
+    if (error) {
+      const errorText = (error.message || '') + (error.details || '') + (error.code || '');
+      const isDuplicateViolation =
+        errorText.includes('votes_one_per_user_per_poll') ||
+        errorText.includes('23505') ||
+        errorText.includes('duplicate key') ||
+        errorText.includes('unique') ||
+        errorText.includes('already voted');
 
-        if (isDuplicateViolation) {
-          try {
-            localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-          } catch {}
-          return {
-            success: false,
-            alreadyVoted: true,
-            message: '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)',
-          };
-        }
+      if (isDuplicateViolation) {
+        try {
+          localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
+        } catch {}
+        return {
+          success: false,
+          alreadyVoted: true,
+          message: '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)',
+        };
+      }
 
-        const isClosed =
-          errorText.includes('closed') ||
-          errorText.includes('expired') ||
-          errorText.includes('마감') ||
-          errorText.includes('capacity');
-        if (isClosed) {
-          return {
-            success: false,
-            message: '투표가 마감되었거나 정원에 도달하여 투표를 진행할 수 없습니다.',
-          };
-        }
+      const isClosed =
+        errorText.includes('closed') ||
+        errorText.includes('expired') ||
+        errorText.includes('마감') ||
+        errorText.includes('capacity');
+      if (isClosed) {
+        return {
+          success: false,
+          message: '투표가 마감되었거나 정원에 도달하여 투표를 진행할 수 없습니다.',
+        };
+      }
 
-        // Fallback: direct table insert with voter UUID
-        const voterUuid = getVoterUUID();
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData?.session?.user?.id;
-
+      // Only attempt direct votes insert with voter_id if RPC function does not exist
+      if (error.code === 'PGRST202' || (error.message || '').includes('Could not find the function')) {
         const { error: insertError } = await supabase.from('votes').insert([
           {
             poll_id: pollId,
             option_id: candidateId,
-            voter_uuid: voterUuid,
-            ...(userId ? { user_id: userId } : {}),
+            voter_id: userId,
           },
         ]);
 
@@ -483,45 +418,63 @@ export async function castVote(
               message: '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)',
             };
           }
+          return {
+            success: false,
+            message: `투표 DB 저장에 실패했습니다: ${insertError.message}`,
+          };
         }
 
         // Update vote_count on poll_options
-        try {
-          const { data: optData } = await supabase
-            .from('poll_options')
-            .select('vote_count')
-            .eq('poll_id', pollId)
-            .eq('id', candidateId)
-            .single();
-          const currentCount = optData ? (Number(optData.vote_count) || 0) : 0;
-          await supabase
-            .from('poll_options')
-            .update({ vote_count: currentCount + 1 })
-            .eq('poll_id', pollId)
-            .eq('id', candidateId);
-        } catch {}
+        const { data: optData } = await supabase
+          .from('poll_options')
+          .select('vote_count')
+          .eq('poll_id', pollId)
+          .eq('id', candidateId)
+          .single();
+        const currentCount = optData ? (Number(optData.vote_count) || 0) : 0;
+        const { error: updateError } = await supabase
+          .from('poll_options')
+          .update({ vote_count: currentCount + 1 })
+          .eq('poll_id', pollId)
+          .eq('id', candidateId);
+
+        if (updateError) {
+          return {
+            success: false,
+            message: `득표수 DB 갱신에 실패했습니다: ${updateError.message}`,
+          };
+        }
       } else {
-        console.log('[castVote RPC success]', data);
+        return {
+          success: false,
+          message: `투표 저장에 실패했습니다: ${error.message}`,
+        };
       }
-    } catch (err: any) {
-      console.warn('[castVote RPC error]', err);
+    } else {
+      console.log('[castVote RPC success]', data);
     }
+
+    // Only mark local voted flag after DB write succeeded
+    try {
+      localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
+    } catch {}
+
+    return {
+      success: true,
+      message: '투표함에 투표용지가 성공적으로 투입되었습니다!',
+    };
+  } catch (err: any) {
+    console.warn('[castVote exception]', err);
+    return {
+      success: false,
+      message: '네트워크 오류로 투표가 DB에 저장되지 않았습니다. 다시 시도해주세요.',
+    };
   }
-
-  // Mark local voted flag
-  try {
-    localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-  } catch {}
-
-  return {
-    success: true,
-    message: '투표함에 투표용지가 성공적으로 투입되었습니다!',
-  };
 }
 
 /**
  * Standard subscribePollRealtime helper:
- * Subscribes to poll_options changes and invokes callback with updated candidate vote count
+ * Subscribes strictly to Supabase DB postgres_changes on poll_options (no broadcast +1)
  */
 export function subscribePollRealtime(
   pollId: string,
@@ -553,31 +506,6 @@ export function subscribePollRealtime(
         }
       }
     )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'poll_options',
-      },
-      (payload: any) => {
-        const row = payload.new;
-        if (row && row.id && (row.poll_id === pollId || !row.poll_id)) {
-          onUpdate({
-            optionId: String(row.id),
-            votes: Number(row.vote_count !== undefined ? row.vote_count : row.votes) || 0,
-          });
-        }
-      }
-    )
-    .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
-      if (payload && payload.candidateId) {
-        onUpdate({
-          optionId: String(payload.candidateId),
-          votes: -1, // signal increment
-        });
-      }
-    })
     .subscribe();
 
   return () => {
@@ -615,6 +543,7 @@ export interface VoteCastPayload {
 export interface MultiplayerRoomHandle {
   channel: any;
   sendMove: (x: number, z: number, rotY: number, isMoving: boolean) => void;
+  updatePresence: (x: number, z: number, rotY: number, isMoving: boolean) => void;
   broadcastVote: (nickname: string, candidateId: string) => void;
   leave: () => void;
 }
@@ -643,11 +572,13 @@ export function joinMultiplayerRoom(
     return {
       channel: null,
       sendMove: () => {},
+      updatePresence: () => {},
       broadcastVote: () => {},
       leave: () => {},
     };
   }
 
+  let isSubscribed = false;
   const roomChannelName = `voteverse_room_${pollId}`;
   const channel = supabase.channel(roomChannelName, {
     config: {
@@ -702,6 +633,7 @@ export function joinMultiplayerRoom(
     })
     .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
+        isSubscribed = true;
         try {
           await channel.track({
             userId: localPlayer.userId,
@@ -721,6 +653,7 @@ export function joinMultiplayerRoom(
   return {
     channel,
     sendMove: (x: number, z: number, rotY: number, isMoving: boolean) => {
+      if (!isSubscribed) return;
       try {
         channel.send({
           type: 'broadcast',
@@ -733,11 +666,28 @@ export function joinMultiplayerRoom(
             isMoving,
           },
         });
-      } catch (err) {
+      } catch {
         // silent fail on network glitch
       }
     },
+    updatePresence: (x: number, z: number, rotY: number, isMoving: boolean) => {
+      if (!isSubscribed) return;
+      try {
+        channel.track({
+          userId: localPlayer.userId,
+          nickname: localPlayer.nickname,
+          avatarType: localPlayer.avatarType,
+          x,
+          z,
+          rotY,
+          isMoving,
+        });
+      } catch {
+        // silent fail
+      }
+    },
     broadcastVote: (nickname: string, candidateId: string) => {
+      if (!isSubscribed) return;
       try {
         channel.send({
           type: 'broadcast',
@@ -748,11 +698,12 @@ export function joinMultiplayerRoom(
             candidateId,
           },
         });
-      } catch (err) {
+      } catch {
         // silent fail
       }
     },
     leave: () => {
+      isSubscribed = false;
       try {
         channel.untrack();
       } catch {}

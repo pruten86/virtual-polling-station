@@ -133,7 +133,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
     const channelName = `realtime_poll_${pollId}`;
     const channel = supabase.channel(channelName);
 
-    // 1. Listen for database updates on poll_options
+    // 1. Listen strictly for DB updates on poll_options (no local +1 broadcast)
     channel
       .on(
         'postgres_changes',
@@ -146,58 +146,24 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
         (payload: any) => {
           const updatedRow = payload.new;
           if (updatedRow && updatedRow.id) {
-            setLiveCandidates((prev) => {
-              const next = prev.map((c) =>
-                c.id === updatedRow.id
-                  ? { ...c, votes: Number(updatedRow.vote_count !== undefined ? updatedRow.vote_count : updatedRow.votes) || c.votes }
-                  : c
-              );
-              if (onRealtimeCandidateUpdate) {
-                onRealtimeCandidateUpdate(next);
-              }
-              return next;
-            });
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'poll_options',
-        },
-        (payload: any) => {
-          const updatedRow = payload.new;
-          if (updatedRow && updatedRow.id && (updatedRow.poll_id === pollId || !updatedRow.poll_id)) {
-            setLiveCandidates((prev) => {
-              const next = prev.map((c) =>
-                c.id === updatedRow.id
-                  ? { ...c, votes: Number(updatedRow.vote_count !== undefined ? updatedRow.vote_count : updatedRow.votes) || c.votes }
-                  : c
-              );
-              if (onRealtimeCandidateUpdate) {
-                onRealtimeCandidateUpdate(next);
-              }
-              return next;
-            });
-          }
-        }
-      )
-      // 2. Broadcast channel for instant peer-to-peer vote reflection
-      .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
-        if (payload && payload.candidateId) {
-          setLiveCandidates((prev) => {
-            const next = prev.map((c) =>
-              c.id === payload.candidateId ? { ...c, votes: c.votes + 1 } : c
-            );
-            if (onRealtimeCandidateUpdate) {
-              onRealtimeCandidateUpdate(next);
+            const nextVotes =
+              updatedRow.vote_count !== undefined
+                ? Number(updatedRow.vote_count)
+                : Number(updatedRow.votes);
+            if (!Number.isNaN(nextVotes)) {
+              setLiveCandidates((prev) => {
+                const next = prev.map((c) =>
+                  c.id === updatedRow.id ? { ...c, votes: nextVotes } : c
+                );
+                if (onRealtimeCandidateUpdate) {
+                  onRealtimeCandidateUpdate(next);
+                }
+                return next;
+              });
             }
-            return next;
-          });
+          }
         }
-      })
+      )
       .subscribe((status: string) => {
         if (status === 'SUBSCRIBED') {
           setIsRealtimeConnected(true);

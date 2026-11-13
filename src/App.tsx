@@ -10,17 +10,15 @@ import { buildPollingStationEnvironment, EnvironmentResult } from './scene/envir
 import {
   getAllPolls,
   getPollTallies,
-  recordPollVote,
   getActiveOfficialChannel,
-  recordOfficialVote,
   generateRandomNickname,
 } from './data/presetPolls';
-import { supabase, isSupabaseConfigured, getVoterUUID } from './lib/supabase';
 import {
   ensureAnonymousAuth,
   castVote,
   subscribePollRealtime,
   checkHasVotedVoteverse,
+  fetchPollTalliesFromDB,
   joinMultiplayerRoom,
   MultiplayerRoomHandle,
   fetchGuestbook,
@@ -124,8 +122,8 @@ export default function App() {
   const [guestbookMessages, setGuestbookMessages] = useState<GuestbookMessage[]>([]);
   const [isGuestbookLoading, setIsGuestbookLoading] = useState<boolean>(false);
 
-  // Persistent unique identifier for local user in Realtime Room
-  const myUserId = useRef<string>(getVoterUUID()).current;
+  // Supabase authenticated anonymous user ID (unified across voting, guestbook, and multiplayer)
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   // Mutable refs for Three.js engine and input
   const playerRef = useRef<CharacterController | null>(null);
@@ -150,11 +148,13 @@ export default function App() {
         targetPos: THREE.Vector3;
         targetRot: number;
         isMoving: boolean;
+        lastMoveBroadcastAt?: number;
       }
     >
   >(new Map());
   const roomHandleRef = useRef<MultiplayerRoomHandle | null>(null);
   const lastBroadcastTimeRef = useRef<number>(0);
+  const lastPresenceTrackTimeRef = useRef<number>(0);
   const lastSentMovingRef = useRef<boolean>(false);
 
   // Step synchronization with Environment beacon indicators
@@ -166,7 +166,15 @@ export default function App() {
 
   // 2. 컴포넌트 마운트 시 ensureAnonymousAuth()를 호출해 익명 유저 세션을 발급/확인
   useEffect(() => {
-    ensureAnonymousAuth();
+    let isMounted = true;
+    ensureAnonymousAuth().then((uid) => {
+      if (isMounted && uid) {
+        setAuthUserId(uid);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Synchronize user vote status for the current poll
@@ -183,26 +191,49 @@ export default function App() {
     };
   }, [currentPoll.id]);
 
-  // 4. ResultsModal(개표 전광판)이 켜져 있거나 투표소 진입 시 subscribePollRealtime을 등록해 실시간으로 후보자 득표수(candidates.votes)가 갱신되게 처리
+  // Fetch authoritative candidate tallies from Supabase DB
+  const syncTalliesFromDB = useCallback(async (poll: PollStation, base: Candidate[]) => {
+    const dbCandidates = await fetchPollTalliesFromDB(poll.id, base);
+    if (dbCandidates) {
+      setCandidates(dbCandidates);
+      if (poll.isOfficial) {
+        const dbTotal = dbCandidates.reduce((s, c) => s + c.votes, 0);
+        setOfficialChannelState((prev) => ({
+          ...prev,
+          activeChannelIndex: Math.floor(dbTotal / 100) + 1,
+          channelVotes: dbTotal % 100,
+          totalCumulativeVotes: dbTotal,
+        }));
+      }
+    }
+  }, []);
+
+  // 4. ResultsModal(개표 전광판)이 켜져 있거나 투표소 진입 시 DB 조회 및 subscribePollRealtime을 등록해 실시간으로 후보자 득표수(candidates.votes)가 갱신되게 처리
   useEffect(() => {
     if (!hasEntered && !isResultsOpen) return;
 
+    syncTalliesFromDB(currentPoll, currentPoll.candidates);
+
     const unsubscribe = subscribePollRealtime(currentPoll.id, ({ optionId, votes }) => {
-      setCandidates((prev) =>
-        prev.map((c) => {
-          if (c.id === optionId) {
-            const nextVotes = votes >= 0 ? votes : c.votes + 1;
-            return { ...c, votes: nextVotes };
-          }
-          return c;
-        })
-      );
+      setCandidates((prev) => {
+        const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
+        if (currentPoll.isOfficial) {
+          const dbTotal = next.reduce((s, c) => s + c.votes, 0);
+          setOfficialChannelState((prevCh) => ({
+            ...prevCh,
+            activeChannelIndex: Math.floor(dbTotal / 100) + 1,
+            channelVotes: dbTotal % 100,
+            totalCumulativeVotes: dbTotal,
+          }));
+        }
+        return next;
+      });
     });
 
     return () => {
       unsubscribe();
     };
-  }, [currentPoll.id, hasEntered, isResultsOpen]);
+  }, [currentPoll, hasEntered, isResultsOpen, syncTalliesFromDB]);
 
   // Guestbook DB load & Supabase Realtime INSERT subscription
   useEffect(() => {
@@ -274,14 +305,14 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection
+  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection (using authUserId)
   useEffect(() => {
-    if (!hasEntered) return;
+    if (!hasEntered || !authUserId) return;
 
     const room = joinMultiplayerRoom(
       currentPoll.id,
       {
-        userId: myUserId,
+        userId: authUserId,
         nickname,
         avatarType,
         x: playerRef.current ? playerRef.current.group.position.x : -6.5,
@@ -305,7 +336,8 @@ export default function App() {
             }
           }
 
-          // B. Add new remote avatars or update existing
+          // B. Add new remote avatars (using latest Presence coordinates for late joiners) or sync idle
+          const now = performance.now();
           for (const p of remotePlayers) {
             let item = currentMap.get(p.userId);
             if (!item) {
@@ -328,7 +360,7 @@ export default function App() {
                 isMoving: Boolean(p.isMoving),
               };
               currentMap.set(p.userId, item);
-            } else {
+            } else if (!item.lastMoveBroadcastAt || now - item.lastMoveBroadcastAt > 1000) {
               item.targetPos.set(p.x, 0, p.z);
               item.targetRot = p.rotY;
               item.isMoving = Boolean(p.isMoving);
@@ -341,18 +373,14 @@ export default function App() {
             item.targetPos.set(x, 0, z);
             item.targetRot = rotY;
             item.isMoving = Boolean(isMoving);
+            item.lastMoveBroadcastAt = performance.now();
           }
         },
-        onVoteCast: ({ userId, nickname: voterName, candidateId }) => {
-          // If message is from another peer, notify room
-          if (userId !== myUserId) {
+        onVoteCast: ({ userId, nickname: voterName }) => {
+          // Toast notification ONLY - do NOT locally increment candidate tallies here
+          if (userId !== authUserId) {
             sounds.playChime();
             showToast(`🗳️ [${voterName}]님이 소중한 한 표를 행사했습니다!`);
-            if (candidateId) {
-              setCandidates((prev) =>
-                prev.map((c) => (c.id === candidateId ? { ...c, votes: c.votes + 1 } : c))
-              );
-            }
           }
         },
       }
@@ -373,7 +401,7 @@ export default function App() {
       remoteAvatarsRef.current.clear();
       setOnlineCount(1);
     };
-  }, [hasEntered, currentPoll.id, nickname, avatarType, myUserId, showToast]);
+  }, [hasEntered, currentPoll.id, nickname, avatarType, authUserId, showToast]);
 
   const totalVotes = candidates.reduce((s, c) => s + c.votes, 0);
   const maxCapacity = currentPoll.maxVoters || 100;
@@ -392,25 +420,22 @@ export default function App() {
 
     const selectedCandidate = candidates.find((c) => c.id === userVoteId) || { id: userVoteId };
 
-    // castVote(currentPoll.id, selectedCandidate.id) 호출
+    // Strict DB vote recording via castVote(currentPoll.id, selectedCandidate.id)
     const res = await castVote(currentPoll.id, selectedCandidate.id);
 
-    // 중복 투표거나 마감 에러 시 alert(res.message) 표시 후 차단
-    if (!res.success || res.alreadyVoted) {
+    // Block on duplicate vote or any DB write error (never show certificate if DB failed)
+    if (!res.success) {
       sounds.playWarning();
-      const msg = res.message || '이미 이번 안건에 소중한 한 표를 행사하셨습니다. (1인 1표 원칙)';
-      try {
-        window.alert(msg);
-      } catch {
-        // window.alert fallback in iframe
-      }
+      const msg = res.message || '투표 저장에 실패했습니다. 잠시 후 다시 시도해주세요.';
       showToast(msg);
-      setHasVoted(true);
-      setCurrentStep(4);
+      if (res.alreadyVoted) {
+        setHasVoted(true);
+        setCurrentStep(4);
+      }
       return;
     }
 
-    // 성공 시 기존 효과음 재생 및 확인증 모달(setShowCertificate) 표시
+    // DB write succeeded: play drop sound & animation, then show certificate & refresh DB tallies
     sounds.playDropSound();
     isDroppingBallotRef.current = true;
     ballotDropProgressRef.current = 0;
@@ -433,41 +458,35 @@ export default function App() {
       ).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       setVoteTimestamp(timeStr);
 
-      if (currentPoll.isOfficial) {
-        const officialRes = recordOfficialVote(currentPoll.id, selectedCandidate.id, candidates);
-        setCandidates(officialRes.cumulativeCandidates);
-        setOfficialChannelState({
-          activeChannelIndex: officialRes.activeChannelIndex,
-          channelVotes: officialRes.activeChannelVotes,
-          totalCumulativeVotes: officialRes.totalCumulativeVotes,
-          allChannels: officialRes.allChannels,
-        });
-        showToast(
-          `투표용지가 투입되었습니다! (제${officialRes.activeChannelIndex}투표소에 기록됨) 4번 개표 전광판을 확인하세요.`
-        );
-      } else {
-        const updated = recordPollVote(currentPoll.id, selectedCandidate.id, candidates);
-        setCandidates(updated);
-        showToast('투표함에 투표용지가 투입되었습니다! 4번 개표 전광판에서 실시간 결과를 확인하세요.');
-      }
+      // Refresh authoritative candidate tallies strictly from Supabase DB
+      syncTalliesFromDB(currentPoll, candidates);
+
+      showToast(
+        currentPoll.isOfficial
+          ? `투표용지가 투입되었습니다! (제${officialChannelState.activeChannelIndex}투표소에 기록됨) 4번 개표 전광판을 확인하세요.`
+          : '투표함에 투표용지가 투입되었습니다! 4번 개표 전광판에서 실시간 결과를 확인하세요.'
+      );
 
       // 확인증 모달(setShowCertificate) 표시
       setTimeout(() => {
         setShowCertificate(true);
       }, 600);
 
-      // Broadcast vote_cast event to other peers in room
+      // Broadcast vote_cast toast notification to other peers in room
       if (roomHandleRef.current) {
         roomHandleRef.current.broadcastVote(nickname, selectedCandidate.id);
-      } else if (isSupabaseConfigured && supabase) {
-        supabase.channel(`realtime_poll_${currentPoll.id}`).send({
-          type: 'broadcast',
-          event: 'vote_cast',
-          payload: { candidateId: selectedCandidate.id },
-        });
       }
     }, 850);
-  }, [currentPoll, userVoteId, candidates, showToast, setShowCertificate, nickname]);
+  }, [
+    currentPoll,
+    userVoteId,
+    candidates,
+    showToast,
+    setShowCertificate,
+    nickname,
+    syncTalliesFromDB,
+    officialChannelState.activeChannelIndex,
+  ]);
 
   // Handle Station Interaction
   const handleInteract = useCallback(() => {
@@ -778,7 +797,7 @@ export default function App() {
 
         player.update(isMoving, delta, moveSpeed);
 
-        // Throttled Broadcast of local player movements to other connected peers (85ms throttle)
+        // Throttled Broadcast + Periodic Presence track so late joiners see up-to-date positions
         if (roomHandleRef.current) {
           const now = performance.now();
           if (isMoving) {
@@ -791,10 +810,26 @@ export default function App() {
                 true
               );
             }
+            if (now - lastPresenceTrackTimeRef.current > 500) {
+              lastPresenceTrackTimeRef.current = now;
+              roomHandleRef.current.updatePresence(
+                player.group.position.x,
+                player.group.position.z,
+                player.group.rotation.y,
+                true
+              );
+            }
             lastSentMovingRef.current = true;
           } else if (lastSentMovingRef.current) {
             lastSentMovingRef.current = false;
+            lastPresenceTrackTimeRef.current = now;
             roomHandleRef.current.sendMove(
+              player.group.position.x,
+              player.group.position.z,
+              player.group.rotation.y,
+              false
+            );
+            roomHandleRef.current.updatePresence(
               player.group.position.x,
               player.group.position.z,
               player.group.rotation.y,
@@ -929,23 +964,27 @@ export default function App() {
     setNickname(selectedNickname);
     setAvatarType(selectedAvatar);
 
+    if (!authUserId) {
+      ensureAnonymousAuth().then((uid) => {
+        if (uid) setAuthUserId(uid);
+      });
+    }
+
     const isNewPoll = selectedPoll.id !== currentPoll.id;
     setCurrentPoll(selectedPoll);
 
-    // Refresh candidate tallies and official channel state
+    // Initialize candidate state from selected poll and sync immediately with Supabase DB
+    setCandidates(selectedPoll.candidates);
     if (selectedPoll.isOfficial) {
-      const chInfo = getActiveOfficialChannel(selectedPoll.id, selectedPoll.candidates);
-      setOfficialChannelState({
-        activeChannelIndex: chInfo.activeChannelIndex,
-        channelVotes: chInfo.channelVotes,
-        totalCumulativeVotes: chInfo.totalCumulativeVotes,
-        allChannels: chInfo.allChannels,
-      });
-      setCandidates(chInfo.cumulativeCandidates);
-    } else {
-      const tallies = getPollTallies(selectedPoll);
-      setCandidates(tallies);
+      const dbTotal = selectedPoll.candidates.reduce((s, c) => s + c.votes, 0);
+      setOfficialChannelState((prev) => ({
+        ...prev,
+        activeChannelIndex: Math.floor(dbTotal / 100) + 1,
+        channelVotes: dbTotal % 100,
+        totalCumulativeVotes: dbTotal,
+      }));
     }
+    syncTalliesFromDB(selectedPoll, selectedPoll.candidates);
 
     // Update URL parameter
     try {

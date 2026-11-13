@@ -1,5 +1,5 @@
 import { PollStation, Candidate, PollChannelData } from '../types';
-import { supabase, isSupabaseConfigured, getVoterUUID, GuestbookEntry } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, ensureAnonymousAuth, GuestbookEntry } from '../lib/supabase';
 
 const ADJECTIVES = [
   '소신 있는',
@@ -651,8 +651,6 @@ const STORAGE_KEY_GUESTBOOK_PREFIX = 'vps_guestbook_';
  * Check if the current browser/device has already cast a vote for this poll
  */
 export async function checkHasVoted(pollId: string): Promise<boolean> {
-  const voterUuid = getVoterUUID();
-
   // 1. Check local storage cache first
   try {
     if (localStorage.getItem(STORAGE_KEY_VOTED_PREFIX + pollId) === 'true') {
@@ -662,14 +660,17 @@ export async function checkHasVoted(pollId: string): Promise<boolean> {
     // ignore
   }
 
-  // 2. Query Supabase votes table if configured
+  // 2. Query Supabase votes table if configured (using voter_id = auth.uid())
   if (isSupabaseConfigured && supabase) {
     try {
+      const userId = await ensureAnonymousAuth();
+      if (!userId) return false;
+
       const { data, error } = await supabase
         .from('votes')
         .select('id')
         .eq('poll_id', pollId)
-        .eq('voter_uuid', voterUuid)
+        .eq('voter_id', userId)
         .limit(1);
 
       if (!error && data && data.length > 0) {
@@ -724,8 +725,6 @@ export async function recordVoteAsync(
     // ignore
   }
 
-  const voterUuid = getVoterUUID();
-
   // 1. Process in local data layer
   let updatedCandidates: Candidate[] = [];
   let officialState: {
@@ -748,26 +747,27 @@ export async function recordVoteAsync(
     updatedCandidates = recordPollVote(pollId, candidateId, currentCandidates);
   }
 
-  // 2. Persist to Supabase if configured
+  // 2. Persist to Supabase if configured (using voter_id = auth.uid())
   if (isSupabaseConfigured && supabase) {
     try {
-      // Insert vote record
-      await supabase.from('votes').insert([
-        {
-          poll_id: pollId,
-          option_id: candidateId,
-          voter_uuid: voterUuid,
-        },
-      ]);
+      const userId = await ensureAnonymousAuth();
+      if (userId) {
+        await supabase.from('votes').insert([
+          {
+            poll_id: pollId,
+            option_id: candidateId,
+            voter_id: userId,
+          },
+        ]);
 
-      // Attempt to increment vote_count in poll_options
-      const targetCandidate = updatedCandidates.find((c) => c.id === candidateId);
-      if (targetCandidate) {
-        await supabase
-          .from('poll_options')
-          .update({ vote_count: targetCandidate.votes })
-          .eq('poll_id', pollId)
-          .eq('id', candidateId);
+        const targetCandidate = updatedCandidates.find((c) => c.id === candidateId);
+        if (targetCandidate) {
+          await supabase
+            .from('poll_options')
+            .update({ vote_count: targetCandidate.votes })
+            .eq('poll_id', pollId)
+            .eq('id', candidateId);
+        }
       }
     } catch (err) {
       console.warn('[Supabase recordVoteAsync error, local state retained]', err);
@@ -795,7 +795,7 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
   try {
     const { data: pollsData, error: pollsError } = await supabase
       .from('polls')
-      .select('*')
+      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
       .order('created_at', { ascending: false });
 
     if (pollsError || !pollsData || pollsData.length === 0) {
@@ -824,21 +824,22 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
       });
     }
 
+    const officialPresetIds = new Set(PRESET_POLLS.filter((p) => p.isOfficial).map((p) => p.id));
+
     const remotePolls: PollStation[] = pollsData.map((row: any) => {
       const candidates = (optionsMap[row.id] || []).sort(
         (a, b) => a.symbolNumber - b.symbolNumber
       );
+      const isOfficial = officialPresetIds.has(String(row.id)) || row.category === 'official';
       return {
         id: row.id,
         title: row.title,
         description: row.description || '',
         category: row.category || 'public',
-        accessCode: row.access_code || undefined,
-        adminPin: row.admin_pin || undefined,
         maxVoters: Number(row.max_voters) || 100,
         createdAt: row.created_at ? row.created_at.split('T')[0] : '2026-11-08',
-        isOfficial: Boolean(row.is_official),
-        isCustom: !row.is_official,
+        isOfficial,
+        isCustom: !isOfficial,
         durationHours: Number(row.duration_hours) || 24,
         expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : undefined,
         candidates: candidates.length > 0 ? candidates : PRESET_POLLS[0].candidates,
@@ -870,17 +871,14 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
 
   if (isSupabaseConfigured && supabase && poll.isCustom) {
     try {
-      // Upsert poll
+      // Upsert poll using actual DB columns only (no is_official, access_code, admin_pin)
       await supabase.from('polls').upsert([
         {
           id: poll.id,
           title: poll.title,
           description: poll.description,
           category: poll.category,
-          access_code: poll.accessCode || null,
-          admin_pin: poll.adminPin || null,
           max_voters: poll.maxVoters,
-          is_official: Boolean(poll.isOfficial),
           duration_hours: poll.durationHours || 24,
           expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
           created_at: new Date().toISOString(),
@@ -934,7 +932,7 @@ export async function fetchGuestbookAsync(pollId: string): Promise<GuestbookEntr
     try {
       const { data, error } = await supabase
         .from('guestbook')
-        .select('*')
+        .select('id, poll_id, display_name, message, created_at')
         .eq('poll_id', pollId)
         .order('created_at', { ascending: false })
         .limit(50);
@@ -942,8 +940,8 @@ export async function fetchGuestbookAsync(pollId: string): Promise<GuestbookEntr
       if (!error && data) {
         return data.map((row: any) => ({
           id: String(row.id),
-          pollId: row.poll_id,
-          nickname: row.nickname,
+          pollId: row.poll_id || pollId,
+          nickname: row.display_name || '선거인',
           message: row.message,
           createdAt: row.created_at,
         }));
@@ -953,33 +951,7 @@ export async function fetchGuestbookAsync(pollId: string): Promise<GuestbookEntr
     }
   }
 
-  // 2. Local fallback
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_GUESTBOOK_PREFIX + pollId);
-    if (raw) {
-      return JSON.parse(raw);
-    }
-  } catch {
-    // ignore
-  }
-
-  // Initial cheerful greeting comments for new visitors
-  return [
-    {
-      id: 'welcome-1',
-      pollId,
-      nickname: '소신 있는 유권자 #101',
-      message: '🗳️ 우리 모두의 소중한 한 표가 모여 더 나은 결정을 만듭니다!',
-      createdAt: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      id: 'welcome-2',
-      pollId,
-      nickname: '칼퇴를 꿈꾸는 주권자 #405',
-      message: '공정하고 투명한 모의투표 체험 최고네요! 모두 응원합니다 👏',
-      createdAt: new Date(Date.now() - 1800000).toISOString(),
-    },
-  ];
+  return [];
 }
 
 export async function addGuestbookAsync(
@@ -995,28 +967,21 @@ export async function addGuestbookAsync(
     createdAt: new Date().toISOString(),
   };
 
-  // 1. Local fallback storage
-  try {
-    const current = await fetchGuestbookAsync(pollId);
-    const updated = [newEntry, ...current].slice(0, 50);
-    localStorage.setItem(STORAGE_KEY_GUESTBOOK_PREFIX + pollId, JSON.stringify(updated));
-  } catch {
-    // ignore
-  }
-
-  // 2. Insert into Supabase
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase.from('guestbook').insert([
-        {
-          poll_id: pollId,
-          nickname,
-          message,
-          created_at: newEntry.createdAt,
-        },
-      ]);
+      const userId = await ensureAnonymousAuth();
+      if (userId) {
+        await supabase.from('guestbook').insert([
+          {
+            poll_id: pollId,
+            user_id: userId,
+            display_name: nickname,
+            message,
+          },
+        ]);
+      }
     } catch (err) {
-      console.warn('[Supabase addGuestbookAsync error, saved locally]', err);
+      console.warn('[Supabase addGuestbookAsync error]', err);
     }
   }
 

@@ -82,7 +82,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
     const timer = setInterval(() => {
       setTick((t) => t + 1);
-      setPolls(getAllPolls());
+      const now = Date.now();
+      setPolls((prev) => prev.filter((p) => !p.expiresAt || p.expiresAt > now));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -217,7 +218,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   };
 
   // Handle Create Poll Submission with Admin PIN, Political Filter, Max Voters & Timer
-  const handleCreatePollSubmit = (e: React.FormEvent) => {
+  const handleCreatePollSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setForbiddenKeywordError(null);
 
@@ -288,8 +289,14 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       expiresAt,
     };
 
-    createVoteversePoll(createdPoll);
-    setPolls(getAllPolls());
+    const res = await createVoteversePoll(createdPoll);
+    if (!res.success) {
+      sounds.playWarning();
+      setForbiddenKeywordError(res.error || '투표소 DB 저장에 실패했습니다. 다시 시도해주세요.');
+      return;
+    }
+
+    setPolls((prev) => [createdPoll, ...prev.filter((p) => p.id !== createdPoll.id)]);
     setSelectedPollId(createdPoll.id);
 
     // Creator is automatically authorized for their own newly created private room
