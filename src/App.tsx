@@ -5,7 +5,7 @@ import confetti from 'canvas-confetti';
 
 import { AvatarType, Candidate, StationZone, PollStation, PollChannelData } from './types';
 import { sounds } from './sound';
-import { createProceduralAvatar, CharacterController } from './scene/avatar';
+import { createProceduralAvatar, createNameTagSprite, CharacterController } from './scene/avatar';
 import { buildPollingStationEnvironment, EnvironmentResult } from './scene/environment';
 import {
   getAllPolls,
@@ -15,12 +15,14 @@ import {
   recordOfficialVote,
   generateRandomNickname,
 } from './data/presetPolls';
-import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { supabase, isSupabaseConfigured, getVoterUUID } from './lib/supabase';
 import {
   ensureAnonymousAuth,
   castVote,
   subscribePollRealtime,
   checkHasVotedVoteverse,
+  joinMultiplayerRoom,
+  MultiplayerRoomHandle,
 } from './lib/voteverseBackend';
 
 import { AvatarSelectModal } from './components/AvatarSelectModal';
@@ -114,6 +116,10 @@ export default function App() {
   const [activeZoneNear, setActiveZoneNear] = useState<StationZone | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [onlineCount, setOnlineCount] = useState<number>(1);
+
+  // Persistent unique identifier for local user in Realtime Room
+  const myUserId = useRef<string>(getVoterUUID()).current;
 
   // Mutable refs for Three.js engine and input
   const playerRef = useRef<CharacterController | null>(null);
@@ -127,6 +133,23 @@ export default function App() {
   const ballotDropMeshRef = useRef<THREE.Mesh | null>(null);
   const isDroppingBallotRef = useRef<boolean>(false);
   const ballotDropProgressRef = useRef<number>(0);
+
+  // Multiplayer Realtime Room & Remote Avatars Map
+  const remoteAvatarsRef = useRef<
+    Map<
+      string,
+      {
+        controller: CharacterController;
+        nameTag: THREE.Sprite;
+        targetPos: THREE.Vector3;
+        targetRot: number;
+        isMoving: boolean;
+      }
+    >
+  >(new Map());
+  const roomHandleRef = useRef<MultiplayerRoomHandle | null>(null);
+  const lastBroadcastTimeRef = useRef<number>(0);
+  const lastSentMovingRef = useRef<boolean>(false);
 
   // Step synchronization with Environment beacon indicators
   useEffect(() => {
@@ -197,6 +220,107 @@ export default function App() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 3200);
   }, []);
+
+  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection
+  useEffect(() => {
+    if (!hasEntered) return;
+
+    const room = joinMultiplayerRoom(
+      currentPoll.id,
+      {
+        userId: myUserId,
+        nickname,
+        avatarType,
+        x: playerRef.current ? playerRef.current.group.position.x : -6.5,
+        z: playerRef.current ? playerRef.current.group.position.z : 0.5,
+        rotY: playerRef.current ? playerRef.current.group.rotation.y : Math.PI,
+      },
+      {
+        onPresenceSync: (remotePlayers) => {
+          setOnlineCount(remotePlayers.length + 1);
+
+          const currentMap = remoteAvatarsRef.current;
+          const activeIds = new Set(remotePlayers.map((p) => p.userId));
+
+          // A. Remove avatars of users who left presence
+          for (const [id, item] of currentMap.entries()) {
+            if (!activeIds.has(id)) {
+              if (sceneRef.current) {
+                sceneRef.current.remove(item.controller.group);
+              }
+              currentMap.delete(id);
+            }
+          }
+
+          // B. Add new remote avatars or update existing
+          for (const p of remotePlayers) {
+            let item = currentMap.get(p.userId);
+            if (!item) {
+              const controller = createProceduralAvatar(p.avatarType);
+              controller.group.position.set(p.x, 0, p.z);
+              controller.lookAtAngle(p.rotY);
+
+              const nameTag = createNameTagSprite(p.nickname);
+              controller.group.add(nameTag);
+
+              if (sceneRef.current) {
+                sceneRef.current.add(controller.group);
+              }
+
+              item = {
+                controller,
+                nameTag,
+                targetPos: new THREE.Vector3(p.x, 0, p.z),
+                targetRot: p.rotY,
+                isMoving: Boolean(p.isMoving),
+              };
+              currentMap.set(p.userId, item);
+            } else {
+              item.targetPos.set(p.x, 0, p.z);
+              item.targetRot = p.rotY;
+              item.isMoving = Boolean(p.isMoving);
+            }
+          }
+        },
+        onPlayerMove: ({ userId, x, z, rotY, isMoving }) => {
+          const item = remoteAvatarsRef.current.get(userId);
+          if (item) {
+            item.targetPos.set(x, 0, z);
+            item.targetRot = rotY;
+            item.isMoving = Boolean(isMoving);
+          }
+        },
+        onVoteCast: ({ userId, nickname: voterName, candidateId }) => {
+          // If message is from another peer, notify room
+          if (userId !== myUserId) {
+            sounds.playChime();
+            showToast(`🗳️ [${voterName}]님이 소중한 한 표를 행사했습니다!`);
+            if (candidateId) {
+              setCandidates((prev) =>
+                prev.map((c) => (c.id === candidateId ? { ...c, votes: c.votes + 1 } : c))
+              );
+            }
+          }
+        },
+      }
+    );
+
+    roomHandleRef.current = room;
+
+    return () => {
+      room.leave();
+      roomHandleRef.current = null;
+
+      // Clean up remote avatars on leaving/switching room
+      if (sceneRef.current) {
+        for (const item of remoteAvatarsRef.current.values()) {
+          sceneRef.current.remove(item.controller.group);
+        }
+      }
+      remoteAvatarsRef.current.clear();
+      setOnlineCount(1);
+    };
+  }, [hasEntered, currentPoll.id, nickname, avatarType, myUserId, showToast]);
 
   const totalVotes = candidates.reduce((s, c) => s + c.votes, 0);
   const maxCapacity = currentPoll.maxVoters || 100;
@@ -279,8 +403,10 @@ export default function App() {
         setShowCertificate(true);
       }, 600);
 
-      // Broadcast event to other peers if Supabase is connected
-      if (isSupabaseConfigured && supabase) {
+      // Broadcast vote_cast event to other peers in room
+      if (roomHandleRef.current) {
+        roomHandleRef.current.broadcastVote(nickname, selectedCandidate.id);
+      } else if (isSupabaseConfigured && supabase) {
         supabase.channel(`realtime_poll_${currentPoll.id}`).send({
           type: 'broadcast',
           event: 'vote_cast',
@@ -288,7 +414,7 @@ export default function App() {
         });
       }
     }, 850);
-  }, [currentPoll, userVoteId, candidates, showToast, setShowCertificate]);
+  }, [currentPoll, userVoteId, candidates, showToast, setShowCertificate, nickname]);
 
   // Handle Station Interaction
   const handleInteract = useCallback(() => {
@@ -599,6 +725,31 @@ export default function App() {
 
         player.update(isMoving, delta, moveSpeed);
 
+        // Throttled Broadcast of local player movements to other connected peers (85ms throttle)
+        if (roomHandleRef.current) {
+          const now = performance.now();
+          if (isMoving) {
+            if (now - lastBroadcastTimeRef.current > 85) {
+              lastBroadcastTimeRef.current = now;
+              roomHandleRef.current.sendMove(
+                player.group.position.x,
+                player.group.position.z,
+                player.group.rotation.y,
+                true
+              );
+            }
+            lastSentMovingRef.current = true;
+          } else if (lastSentMovingRef.current) {
+            lastSentMovingRef.current = false;
+            roomHandleRef.current.sendMove(
+              player.group.position.x,
+              player.group.position.z,
+              player.group.rotation.y,
+              false
+            );
+          }
+        }
+
         // Smooth Quarter-view Camera Tracking (Keeps all 4 zones naturally visible)
         _targetCamPos.set(
           player.group.position.x - 3.8,
@@ -639,6 +790,21 @@ export default function App() {
         setActiveZoneNear(nearestZone);
       }
 
+      // Update Remote Players' 3D Avatars (Smooth lerp interpolation)
+      for (const item of remoteAvatarsRef.current.values()) {
+        item.controller.group.position.lerp(item.targetPos, 0.18);
+
+        const curAngle = item.controller.group.rotation.y;
+        let diff = item.targetRot - curAngle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        item.controller.lookAtAngle(curAngle + diff * 0.22);
+
+        const distSq = item.controller.group.position.distanceToSquared(item.targetPos);
+        const isRemoteMoving = item.isMoving || distSq > 0.003;
+        item.controller.update(isRemoteMoving, delta, 4.8);
+      }
+
       // NPC Officer subtle idle breathing/head turning
       if (npcRef.current) {
         npcRef.current.update(false, delta, 0);
@@ -677,6 +843,12 @@ export default function App() {
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
+      if (sceneRef.current) {
+        for (const item of remoteAvatarsRef.current.values()) {
+          sceneRef.current.remove(item.controller.group);
+        }
+      }
+      remoteAvatarsRef.current.clear();
       sceneRef.current = null;
       playerRef.current = null;
       npcRef.current = null;
@@ -828,6 +1000,7 @@ export default function App() {
           activeChannelIndex={officialChannelState.activeChannelIndex}
           channelVotes={officialChannelState.channelVotes}
           cumulativeVotes={officialChannelState.totalCumulativeVotes}
+          onlineCount={onlineCount}
           onOpenLobby={() => {
             sounds.playClick();
             setIsLobbyOpen(true);

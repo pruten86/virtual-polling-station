@@ -584,3 +584,180 @@ export function subscribePollRealtime(
     supabase?.removeChannel(channel);
   };
 }
+
+/**
+ * Multiplayer Room Types and Synchronization
+ */
+export interface RemotePlayer {
+  userId: string;
+  nickname: string;
+  avatarType: 'male' | 'female';
+  x: number;
+  z: number;
+  rotY: number;
+  isMoving?: boolean;
+}
+
+export interface PlayerMovePayload {
+  userId: string;
+  x: number;
+  z: number;
+  rotY: number;
+  isMoving: boolean;
+}
+
+export interface VoteCastPayload {
+  userId: string;
+  nickname: string;
+  candidateId: string;
+}
+
+export interface MultiplayerRoomHandle {
+  channel: any;
+  sendMove: (x: number, z: number, rotY: number, isMoving: boolean) => void;
+  broadcastVote: (nickname: string, candidateId: string) => void;
+  leave: () => void;
+}
+
+/**
+ * Connect to polling station room using Supabase Presence & Broadcast
+ * Synchronizes connected players and actions without extra SQL tables
+ */
+export function joinMultiplayerRoom(
+  pollId: string,
+  localPlayer: {
+    userId: string;
+    nickname: string;
+    avatarType: 'male' | 'female';
+    x: number;
+    z: number;
+    rotY: number;
+  },
+  callbacks: {
+    onPresenceSync: (players: RemotePlayer[]) => void;
+    onPlayerMove: (payload: PlayerMovePayload) => void;
+    onVoteCast: (payload: VoteCastPayload) => void;
+  }
+): MultiplayerRoomHandle {
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      channel: null,
+      sendMove: () => {},
+      broadcastVote: () => {},
+      leave: () => {},
+    };
+  }
+
+  const roomChannelName = `voteverse_room_${pollId}`;
+  const channel = supabase.channel(roomChannelName, {
+    config: {
+      presence: { key: localPlayer.userId },
+    },
+  });
+
+  const parsePresenceState = () => {
+    const state = channel.presenceState();
+    const remotePlayers: RemotePlayer[] = [];
+
+    Object.entries(state).forEach(([key, items]: [string, any]) => {
+      if (key === localPlayer.userId) return;
+      if (Array.isArray(items) && items.length > 0) {
+        const latest = items[items.length - 1];
+        if (latest) {
+          remotePlayers.push({
+            userId: latest.userId || key,
+            nickname: latest.nickname || '선거인',
+            avatarType: latest.avatarType === 'female' ? 'female' : 'male',
+            x: typeof latest.x === 'number' ? latest.x : -6.5,
+            z: typeof latest.z === 'number' ? latest.z : 0.5,
+            rotY: typeof latest.rotY === 'number' ? latest.rotY : 0,
+            isMoving: Boolean(latest.isMoving),
+          });
+        }
+      }
+    });
+
+    callbacks.onPresenceSync(remotePlayers);
+  };
+
+  channel
+    .on('presence', { event: 'sync' }, () => {
+      parsePresenceState();
+    })
+    .on('presence', { event: 'join' }, () => {
+      parsePresenceState();
+    })
+    .on('presence', { event: 'leave' }, () => {
+      parsePresenceState();
+    })
+    .on('broadcast', { event: 'player_move' }, ({ payload }: any) => {
+      if (payload && payload.userId && payload.userId !== localPlayer.userId) {
+        callbacks.onPlayerMove(payload);
+      }
+    })
+    .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
+      if (payload) {
+        callbacks.onVoteCast(payload);
+      }
+    })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        try {
+          await channel.track({
+            userId: localPlayer.userId,
+            nickname: localPlayer.nickname,
+            avatarType: localPlayer.avatarType,
+            x: localPlayer.x,
+            z: localPlayer.z,
+            rotY: localPlayer.rotY,
+            isMoving: false,
+          });
+        } catch (err) {
+          console.warn('[Supabase presence track error]', err);
+        }
+      }
+    });
+
+  return {
+    channel,
+    sendMove: (x: number, z: number, rotY: number, isMoving: boolean) => {
+      try {
+        channel.send({
+          type: 'broadcast',
+          event: 'player_move',
+          payload: {
+            userId: localPlayer.userId,
+            x,
+            z,
+            rotY,
+            isMoving,
+          },
+        });
+      } catch (err) {
+        // silent fail on network glitch
+      }
+    },
+    broadcastVote: (nickname: string, candidateId: string) => {
+      try {
+        channel.send({
+          type: 'broadcast',
+          event: 'vote_cast',
+          payload: {
+            userId: localPlayer.userId,
+            nickname,
+            candidateId,
+          },
+        });
+      } catch (err) {
+        // silent fail
+      }
+    },
+    leave: () => {
+      try {
+        channel.untrack();
+      } catch {}
+      supabase?.removeChannel(channel);
+    },
+  };
+}
+

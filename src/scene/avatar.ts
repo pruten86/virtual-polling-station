@@ -362,3 +362,62 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
     type,
   };
 }
+
+/**
+ * Creates a floating 3D billboard name tag sprite above the avatar's head
+ */
+export function createNameTagSprite(name: string): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    ctx.clearRect(0, 0, 256, 64);
+
+    // Dark sleek pill background with subtle sky/cyan border
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.lineWidth = 3;
+
+    const r = 18;
+    const x = 6;
+    const y = 6;
+    const w = 244;
+    const h = 52;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Crisp white Korean typography
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 24px "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(name, 128, 33);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const spriteMat = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+  });
+
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.position.set(0, 2.05, 0);
+  sprite.scale.set(1.4, 0.35, 1);
+  return sprite;
+}
+

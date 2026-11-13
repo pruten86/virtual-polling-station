@@ -33,6 +33,7 @@ interface CollapsibleHUDProps {
   activeChannelIndex?: number;
   channelVotes?: number;
   cumulativeVotes?: number;
+  onlineCount?: number;
 }
 
 export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
@@ -53,6 +54,7 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   activeChannelIndex = 1,
   channelVotes = 0,
   cumulativeVotes = 0,
+  onlineCount = 1,
 }) => {
   // Top HUD collapse state (allows folding the step pipeline into a single line)
   const [isTopCollapsed, setIsTopCollapsed] = useState(false);
@@ -135,6 +137,15 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                   </span>
                 )
               )}
+
+              {/* Concurrent Online Users Badge (Supabase Realtime Presence) */}
+              <span className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 whitespace-nowrap shrink-0">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+                <span>동시 접속 {onlineCount}명</span>
+              </span>
 
               <span className="text-slate-400 hidden lg:inline shrink-0">| 선거인:</span>
               <span className="text-sky-300 font-semibold hidden lg:inline truncate max-w-[180px]">
