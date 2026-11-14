@@ -10,13 +10,16 @@ import { buildPollingStationEnvironment, EnvironmentResult } from './scene/envir
 import {
   getAllPolls,
   getPollTallies,
-  getActiveOfficialChannel,
   generateRandomNickname,
 } from './data/presetPolls';
 import {
   ensureAnonymousAuth,
+  ensurePresetPollsSeeded,
+  ensurePollAndOptionsExist,
+  fetchVoteversePolls,
   castVote,
   subscribePollRealtime,
+  subscribeAllPollsRealtime,
   checkHasVotedVoteverse,
   fetchPollTalliesFromDB,
   joinMultiplayerRoom,
@@ -46,6 +49,81 @@ const _targetLookAt = new THREE.Vector3();
 const _currentCamPos = new THREE.Vector3();
 const _currentLookAt = new THREE.Vector3();
 
+// Build official 100-voter channel summary & breakdown strictly from live DB candidate totals
+function buildOfficialChannelState(cands: Candidate[]): {
+  activeChannelIndex: number;
+  channelVotes: number;
+  totalCumulativeVotes: number;
+  allChannels: PollChannelData[];
+} {
+  const total = cands.reduce((s, c) => s + (Number(c.votes) || 0), 0);
+  const channelCount = Math.floor(total / 100) + 1;
+  const activeChannelIndex = channelCount;
+  const channelVotes = total % 100;
+
+  const allChannels: PollChannelData[] = [];
+  if (total === 0) {
+    const emptyVotes: Record<string, number> = {};
+    cands.forEach((c) => {
+      emptyVotes[c.id] = 0;
+    });
+    allChannels.push({ channelIndex: 1, votes: emptyVotes, totalVotes: 0 });
+  } else {
+    const remainingByCand = cands.map((c) => ({ id: c.id, rem: Number(c.votes) || 0 }));
+    for (let chIdx = 1; chIdx <= channelCount; chIdx++) {
+      const votesMap: Record<string, number> = {};
+      cands.forEach((c) => {
+        votesMap[c.id] = 0;
+      });
+      const chCap = chIdx < channelCount ? 100 : channelVotes;
+      let chTotal = 0;
+      const totalRem = remainingByCand.reduce((s, r) => s + r.rem, 0);
+      if (chCap > 0 && totalRem > 0) {
+        if (chIdx === channelCount) {
+          remainingByCand.forEach((r) => {
+            votesMap[r.id] = r.rem;
+            chTotal += r.rem;
+            r.rem = 0;
+          });
+        } else {
+          let allocated = 0;
+          remainingByCand.forEach((r, idx) => {
+            if (idx === remainingByCand.length - 1) {
+              const take = Math.min(r.rem, chCap - allocated);
+              votesMap[r.id] = take;
+              r.rem -= take;
+              allocated += take;
+            } else {
+              const share = Math.min(r.rem, Math.floor((r.rem / totalRem) * chCap));
+              votesMap[r.id] = share;
+              r.rem -= share;
+              allocated += share;
+            }
+          });
+          for (const r of remainingByCand) {
+            if (allocated >= chCap) break;
+            const add = Math.min(r.rem, chCap - allocated);
+            if (add > 0) {
+              votesMap[r.id] += add;
+              r.rem -= add;
+              allocated += add;
+            }
+          }
+          chTotal = allocated;
+        }
+      }
+      allChannels.push({ channelIndex: chIdx, votes: votesMap, totalVotes: chTotal });
+    }
+  }
+
+  return {
+    activeChannelIndex,
+    channelVotes,
+    totalCumulativeVotes: total,
+    allChannels,
+  };
+}
+
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,6 +132,12 @@ export default function App() {
   const [isLobbyOpen, setIsLobbyOpen] = useState<boolean>(false);
   const [nickname, setNickname] = useState<string>(() => generateRandomNickname());
   const [avatarType, setAvatarType] = useState<AvatarType>('male');
+
+  // All Polls (synced with Supabase DB for Lobby & Realtime)
+  const [allPolls, setAllPolls] = useState<PollStation[]>(() => getAllPolls());
+  const handlePollsUpdated = useCallback((updated: PollStation[]) => {
+    setAllPolls(updated);
+  }, []);
 
   // Currently Selected Polling Station / Poll
   const [currentPoll, setCurrentPoll] = useState<PollStation>(() => {
@@ -70,6 +154,10 @@ export default function App() {
       return getAllPolls()[0];
     }
   });
+  const currentPollRef = useRef<PollStation>(currentPoll);
+  useEffect(() => {
+    currentPollRef.current = currentPoll;
+  }, [currentPoll]);
 
   // Official Channel system state ("온라인 갓바위" 방식 100명 단위 자동 증설)
   const [officialChannelState, setOfficialChannelState] = useState<{
@@ -77,23 +165,16 @@ export default function App() {
     channelVotes: number;
     totalCumulativeVotes: number;
     allChannels: PollChannelData[];
-  }>(() => {
-    if (currentPoll.isOfficial) {
-      const info = getActiveOfficialChannel(currentPoll.id, currentPoll.candidates);
-      return {
-        activeChannelIndex: info.activeChannelIndex,
-        channelVotes: info.channelVotes,
-        totalCumulativeVotes: info.totalCumulativeVotes,
-        allChannels: info.allChannels,
-      };
-    }
-    return {
-      activeChannelIndex: 1,
-      channelVotes: 0,
-      totalCumulativeVotes: 0,
-      allChannels: [],
-    };
-  });
+  }>(() =>
+    currentPoll.isOfficial
+      ? buildOfficialChannelState(currentPoll.candidates)
+      : {
+          activeChannelIndex: 1,
+          channelVotes: 0,
+          totalCumulativeVotes: 0,
+          allChannels: [],
+        }
+  );
 
   // Voting Progress Pipeline
   const [currentStep, setCurrentStep] = useState<number>(1);
@@ -104,13 +185,9 @@ export default function App() {
   const [voteTimestamp, setVoteTimestamp] = useState<string>('');
 
   // Candidates & Real-time votes for the current poll
-  const [candidates, setCandidates] = useState<Candidate[]>(() => {
-    if (currentPoll.isOfficial) {
-      const info = getActiveOfficialChannel(currentPoll.id, currentPoll.candidates);
-      return info.cumulativeCandidates;
-    }
-    return getPollTallies(currentPoll);
-  });
+  const [candidates, setCandidates] = useState<Candidate[]>(() =>
+    currentPoll.isOfficial ? currentPoll.candidates : getPollTallies(currentPoll)
+  );
 
   // Modal Open States
   const [isSignatureOpen, setIsSignatureOpen] = useState<boolean>(false);
@@ -193,7 +270,7 @@ export default function App() {
     }
   }, [currentStep]);
 
-  // 2. 컴포넌트 마운트 시 ensureAnonymousAuth()를 호출해 익명 유저 세션을 발급/확인
+  // 2. 컴포넌트 마운트 시 ensureAnonymousAuth() 호출 및 공식 투표소 3개 DB 자동 시드/조회
   useEffect(() => {
     let isMounted = true;
     ensureAnonymousAuth().then((uid) => {
@@ -201,8 +278,68 @@ export default function App() {
         setAuthUserId(uid);
       }
     });
+
+    ensurePresetPollsSeeded()
+      .then(() => fetchVoteversePolls())
+      .then((fetched) => {
+        if (!isMounted || !fetched || fetched.length === 0) return;
+        setAllPolls(fetched);
+
+        const activeId = currentPollRef.current.id;
+        const matched = fetched.find((p) => p.id === activeId);
+        if (matched) {
+          setCurrentPoll(matched);
+          setCandidates(matched.candidates);
+          if (matched.isOfficial) {
+            setOfficialChannelState(buildOfficialChannelState(matched.candidates));
+          }
+        }
+      });
+
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  // Global Realtime subscription for all poll_options across every poll (keeps Lobby & active poll synchronized)
+  useEffect(() => {
+    const unsubscribeAll = subscribeAllPollsRealtime(({ pollId, optionId, votes }) => {
+      setAllPolls((prevPolls) =>
+        prevPolls.map((p) =>
+          p.id !== pollId
+            ? p
+            : {
+                ...p,
+                candidates: p.candidates.map((c) =>
+                  c.id === optionId ? { ...c, votes } : c
+                ),
+              }
+        )
+      );
+
+      if (pollId === currentPollRef.current.id) {
+        setCandidates((prev) => {
+          const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
+          if (currentPollRef.current.isOfficial) {
+            setOfficialChannelState(buildOfficialChannelState(next));
+          }
+          return next;
+        });
+        setCurrentPoll((prev) =>
+          prev.id === pollId
+            ? {
+                ...prev,
+                candidates: prev.candidates.map((c) =>
+                  c.id === optionId ? { ...c, votes } : c
+                ),
+              }
+            : prev
+        );
+      }
+    });
+
+    return () => {
+      unsubscribeAll();
     };
   }, []);
 
@@ -228,6 +365,13 @@ export default function App() {
     const dbCandidates = await fetchPollTalliesFromDB(poll.id, base);
     if (dbCandidates) {
       setCandidates(dbCandidates);
+      setCurrentPoll((prev) =>
+        prev.id === poll.id ? { ...prev, candidates: dbCandidates } : prev
+      );
+      setAllPolls((prev) =>
+        prev.map((p) => (p.id === poll.id ? { ...p, candidates: dbCandidates } : p))
+      );
+
       const dbTotal = dbCandidates.reduce((s, c) => s + c.votes, 0);
 
       // If DB totalVotes is 0 (DB wiped/reset), clear stale localStorage voted state so user can vote again
@@ -250,12 +394,7 @@ export default function App() {
       }
 
       if (poll.isOfficial) {
-        setOfficialChannelState((prev) => ({
-          ...prev,
-          activeChannelIndex: Math.floor(dbTotal / 100) + 1,
-          channelVotes: dbTotal % 100,
-          totalCumulativeVotes: dbTotal,
-        }));
+        setOfficialChannelState(buildOfficialChannelState(dbCandidates));
       }
     }
   }, []);
@@ -264,28 +403,35 @@ export default function App() {
   useEffect(() => {
     if (!hasEntered && !isResultsOpen) return;
 
-    syncTalliesFromDB(currentPoll, currentPoll.candidates);
+    const activePoll = currentPollRef.current;
+    syncTalliesFromDB(activePoll, activePoll.candidates);
 
-    const unsubscribe = subscribePollRealtime(currentPoll.id, ({ optionId, votes }) => {
+    const unsubscribe = subscribePollRealtime(activePoll.id, ({ optionId, votes }) => {
       setCandidates((prev) => {
         const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
-        if (currentPoll.isOfficial) {
-          const dbTotal = next.reduce((s, c) => s + c.votes, 0);
-          setOfficialChannelState((prevCh) => ({
-            ...prevCh,
-            activeChannelIndex: Math.floor(dbTotal / 100) + 1,
-            channelVotes: dbTotal % 100,
-            totalCumulativeVotes: dbTotal,
-          }));
+        if (currentPollRef.current.isOfficial) {
+          setOfficialChannelState(buildOfficialChannelState(next));
         }
         return next;
       });
+      setAllPolls((prevPolls) =>
+        prevPolls.map((p) =>
+          p.id !== activePoll.id
+            ? p
+            : {
+                ...p,
+                candidates: p.candidates.map((c) =>
+                  c.id === optionId ? { ...c, votes } : c
+                ),
+              }
+        )
+      );
     });
 
     return () => {
       unsubscribe();
     };
-  }, [currentPoll, hasEntered, isResultsOpen, syncTalliesFromDB]);
+  }, [currentPoll.id, hasEntered, isResultsOpen, syncTalliesFromDB]);
 
   // Guestbook DB load & Supabase Realtime INSERT subscription
   useEffect(() => {
@@ -473,8 +619,8 @@ export default function App() {
 
     const selectedCandidate = candidates.find((c) => c.id === userVoteId) || { id: userVoteId };
 
-    // Strict DB vote recording via castVote(currentPoll.id, selectedCandidate.id)
-    const res = await castVote(currentPoll.id, selectedCandidate.id);
+    // Strict DB vote recording via castVote(currentPoll.id, selectedCandidate.id, currentPoll)
+    const res = await castVote(currentPoll.id, selectedCandidate.id, currentPoll);
 
     // Block only on genuine DB write error (never show certificate if DB failed)
     if (!res.success) {
@@ -483,6 +629,30 @@ export default function App() {
       showToast(msg);
       return;
     }
+
+    // Immediately reflect fresh DB tallies returned by castVote across HUD, 3D billboard, ResultsModal & Lobby
+    const freshCandidates = res.tallies
+      ? candidates.map((c) => ({
+          ...c,
+          votes: res.tallies![c.id] !== undefined ? res.tallies![c.id] : c.votes,
+        }))
+      : candidates;
+
+    if (res.tallies) {
+      setCandidates(freshCandidates);
+      setCurrentPoll((prev) =>
+        prev.id === currentPoll.id ? { ...prev, candidates: freshCandidates } : prev
+      );
+      setAllPolls((prev) =>
+        prev.map((p) => (p.id === currentPoll.id ? { ...p, candidates: freshCandidates } : p))
+      );
+      if (currentPoll.isOfficial) {
+        setOfficialChannelState(buildOfficialChannelState(freshCandidates));
+      }
+    }
+
+    const latestTotal = freshCandidates.reduce((s, c) => s + c.votes, 0);
+    const latestChannelIdx = Math.floor(latestTotal / 100) + 1;
 
     // DB write succeeded: play drop sound & animation, then show certificate & refresh DB tallies
     sounds.playDropSound();
@@ -508,11 +678,11 @@ export default function App() {
       setVoteTimestamp(timeStr);
 
       // Refresh authoritative candidate tallies strictly from Supabase DB
-      syncTalliesFromDB(currentPoll, candidates);
+      syncTalliesFromDB(currentPoll, freshCandidates);
 
       showToast(
         currentPoll.isOfficial
-          ? `투표용지가 투입되었습니다! (제${officialChannelState.activeChannelIndex}투표소에 기록됨) 4번 개표 전광판을 확인하세요.`
+          ? `투표용지가 투입되었습니다! (제${latestChannelIdx}투표소에 기록됨) 4번 개표 전광판을 확인하세요.`
           : '투표함에 투표용지가 투입되었습니다! 4번 개표 전광판에서 실시간 결과를 확인하세요.'
       );
 
@@ -534,7 +704,6 @@ export default function App() {
     setShowCertificate,
     nickname,
     syncTalliesFromDB,
-    officialChannelState.activeChannelIndex,
   ]);
 
   // Handle Station Interaction
@@ -1060,18 +1229,21 @@ export default function App() {
     const isNewPoll = selectedPoll.id !== currentPoll.id;
     setCurrentPoll(selectedPoll);
 
-    // Initialize candidate state from selected poll and sync immediately with Supabase DB
+    // Initialize candidate state from selected poll, ensure DB rows exist, and sync immediately with Supabase DB
     setCandidates(selectedPoll.candidates);
     if (selectedPoll.isOfficial) {
-      const dbTotal = selectedPoll.candidates.reduce((s, c) => s + c.votes, 0);
-      setOfficialChannelState((prev) => ({
-        ...prev,
-        activeChannelIndex: Math.floor(dbTotal / 100) + 1,
-        channelVotes: dbTotal % 100,
-        totalCumulativeVotes: dbTotal,
-      }));
+      setOfficialChannelState(buildOfficialChannelState(selectedPoll.candidates));
+    } else {
+      setOfficialChannelState({
+        activeChannelIndex: 1,
+        channelVotes: 0,
+        totalCumulativeVotes: 0,
+        allChannels: [],
+      });
     }
-    syncTalliesFromDB(selectedPoll, selectedPoll.candidates);
+    ensurePollAndOptionsExist(selectedPoll).then(() => {
+      syncTalliesFromDB(selectedPoll, selectedPoll.candidates);
+    });
 
     // Update URL parameter
     try {
@@ -1167,6 +1339,8 @@ export default function App() {
       {(!hasEntered || isLobbyOpen) && (
         <AvatarSelectModal
           initialPollId={currentPoll.id}
+          externalPolls={allPolls}
+          onPollsUpdated={handlePollsUpdated}
           onEnter={handleEnterWorld}
         />
       )}
@@ -1246,7 +1420,12 @@ export default function App() {
           isOfficial={currentPoll.isOfficial}
           allChannels={officialChannelState.allChannels}
           activeChannelIndex={officialChannelState.activeChannelIndex}
-          onRealtimeCandidateUpdate={(updated) => setCandidates(updated)}
+          onRealtimeCandidateUpdate={(updated) => {
+            setCandidates(updated);
+            if (currentPoll.isOfficial) {
+              setOfficialChannelState(buildOfficialChannelState(updated));
+            }
+          }}
           guestbookMessages={guestbookMessages}
           isGuestbookLoading={isGuestbookLoading}
           onPostGuestbook={handlePostGuestbook}

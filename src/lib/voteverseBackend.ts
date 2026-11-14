@@ -16,9 +16,149 @@ export async function initVoteverseSession(): Promise<string | null> {
   return await ensureAnonymousAuth();
 }
 
+let presetSeedPromise: Promise<void> | null = null;
+
+/**
+ * Ensures a specific poll and all its options exist in Supabase DB without overwriting existing vote_count
+ */
+export async function ensurePollAndOptionsExist(poll: PollStation): Promise<void> {
+  if (!isSupabaseConfigured || !supabase || !poll?.id) return;
+
+  try {
+    // 1. Ensure poll row exists (ignoreDuplicates prevents overwriting existing row)
+    await supabase
+      .from('polls')
+      .upsert(
+        [
+          {
+            id: poll.id,
+            title: poll.title,
+            description: poll.description || '',
+            category: poll.category || 'public',
+            max_voters: poll.maxVoters || 100,
+            duration_hours: poll.durationHours || 720,
+            expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
+            created_at: new Date().toISOString(),
+          },
+        ],
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+
+    // 2. Check existing options in DB so we NEVER reset existing vote_count to 0
+    const { data: existingOpts } = await supabase
+      .from('poll_options')
+      .select('id')
+      .eq('poll_id', poll.id);
+
+    const existingIds = new Set((existingOpts || []).map((o: any) => String(o.id)));
+    const missingOptions = (poll.candidates || [])
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ c }) => !existingIds.has(c.id))
+      .map(({ c, idx }) => ({
+        id: c.id,
+        poll_id: poll.id,
+        symbol_number: idx + 1,
+        sort_order: idx + 1,
+        party: c.party || `기호 ${idx + 1}번`,
+        title: c.title,
+        subtitle: c.subtitle || '',
+        badge_color: c.badgeColor || 'blue',
+        accent_bg: c.accentBg || '#3b82f6',
+        vote_count: 0,
+      }));
+
+    if (missingOptions.length > 0) {
+      await supabase
+        .from('poll_options')
+        .upsert(missingOptions, { onConflict: 'id', ignoreDuplicates: true });
+    }
+  } catch (err) {
+    console.warn('[ensurePollAndOptionsExist warning]', err);
+  }
+}
+
+/**
+ * Ensures all 3 official PRESET_POLLS and their options exist in Supabase DB, preserving existing vote_count
+ */
+export async function ensurePresetPollsSeeded(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  if (presetSeedPromise) {
+    return presetSeedPromise;
+  }
+
+  presetSeedPromise = (async () => {
+    try {
+      const presetIds = PRESET_POLLS.map((p) => p.id);
+
+      // 1. Check which official preset polls already exist
+      const { data: existingPolls } = await supabase
+        .from('polls')
+        .select('id')
+        .in('id', presetIds);
+      const existingPollIds = new Set((existingPolls || []).map((p: any) => String(p.id)));
+
+      const missingPolls = PRESET_POLLS.filter((p) => !existingPollIds.has(p.id)).map((p) => ({
+        id: p.id,
+        title: p.title,
+        description: p.description,
+        category: p.category || 'public',
+        max_voters: p.maxVoters || 100,
+        duration_hours: p.durationHours || 720,
+        expires_at: p.expiresAt ? new Date(p.expiresAt).toISOString() : null,
+        created_at: new Date().toISOString(),
+      }));
+
+      if (missingPolls.length > 0) {
+        await supabase
+          .from('polls')
+          .upsert(missingPolls, { onConflict: 'id', ignoreDuplicates: true });
+      }
+
+      // 2. Check existing poll_options for all preset polls so we NEVER overwrite vote_count
+      const { data: existingOpts } = await supabase
+        .from('poll_options')
+        .select('id')
+        .in('poll_id', presetIds);
+      const existingOptIds = new Set((existingOpts || []).map((o: any) => String(o.id)));
+
+      const missingOptions: any[] = [];
+      PRESET_POLLS.forEach((p) => {
+        p.candidates.forEach((c, idx) => {
+          if (!existingOptIds.has(c.id)) {
+            missingOptions.push({
+              id: c.id,
+              poll_id: p.id,
+              symbol_number: idx + 1,
+              sort_order: idx + 1,
+              party: c.party,
+              title: c.title,
+              subtitle: c.subtitle,
+              badge_color: c.badgeColor,
+              accent_bg: c.accentBg,
+              vote_count: 0,
+            });
+          }
+        });
+      });
+
+      if (missingOptions.length > 0) {
+        await supabase
+          .from('poll_options')
+          .upsert(missingOptions, { onConflict: 'id', ignoreDuplicates: true });
+      }
+    } catch (err) {
+      console.warn('[ensurePresetPollsSeeded warning]', err);
+    } finally {
+      presetSeedPromise = null;
+    }
+  })();
+
+  return presetSeedPromise;
+}
+
 /**
  * 2. Fetch public polls list from Supabase (category <> 'private')
- * Falls back to presetPolls / local storage if network or credentials are absent
+ * Seeds official preset polls first, reads live poll_options counts, and falls back gracefully
  */
 export async function fetchVoteversePolls(): Promise<PollStation[]> {
   const localPolls = getAllPolls();
@@ -28,6 +168,9 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
   }
 
   try {
+    // Ensure all 3 official preset polls & options exist in DB without overwriting vote_count
+    await ensurePresetPollsSeeded();
+
     // Fetch public/official polls using only actual DB columns (no is_official, access_code, admin_pin)
     const { data: pollsData, error: pollsError } = await supabase
       .from('polls')
@@ -89,14 +232,27 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       };
     });
 
-    // Merge: ensure standard official preset polls are preserved
+    // Merge: ensure standard official preset polls + local custom private polls are preserved with DB option counts
     const remoteIds = new Set(remotePolls.map((p) => p.id));
     const merged = [...remotePolls];
     PRESET_POLLS.forEach((preset) => {
       if (!remoteIds.has(preset.id)) {
-        merged.push(preset);
+        const dbCands = optionsMap[preset.id];
+        merged.push({
+          ...preset,
+          candidates: dbCands && dbCands.length > 0 ? dbCands : preset.candidates,
+        });
       }
     });
+    localPolls
+      .filter((p) => p.category === 'private' && !remoteIds.has(p.id))
+      .forEach((priv) => {
+        const dbCands = optionsMap[priv.id];
+        merged.push({
+          ...priv,
+          candidates: dbCands && dbCands.length > 0 ? dbCands : priv.candidates,
+        });
+      });
 
     return merged;
   } catch (err) {
@@ -282,9 +438,9 @@ export function clearLocalVoteCache(pollId: string): void {
 }
 
 /**
- * Collects all possible voter IDs (anonymous auth UID + fallback browser UUID)
+ * Collects all possible voter IDs (anonymous auth UID + fallback browser UUID + any revote UUIDs)
  */
-async function collectCurrentVoterIds(): Promise<string[]> {
+async function collectCurrentVoterIds(pollId?: string): Promise<string[]> {
   const ids = new Set<string>();
   const authUid = await ensureAnonymousAuth();
   if (authUid) ids.add(authUid);
@@ -303,6 +459,22 @@ async function collectCurrentVoterIds(): Promise<string[]> {
   const browserUuid = getVoterUUID();
   if (browserUuid) ids.add(browserUuid);
 
+  if (pollId) {
+    try {
+      const raw = localStorage.getItem(`vps_revote_uuids_${pollId}`);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          arr.forEach((id) => {
+            if (typeof id === 'string' && id) ids.add(id);
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   return Array.from(ids);
 }
 
@@ -313,7 +485,7 @@ async function collectCurrentVoterIds(): Promise<string[]> {
 export async function checkHasVotedVoteverse(pollId: string): Promise<boolean> {
   if (isSupabaseConfigured && supabase) {
     try {
-      const voterIds = await collectCurrentVoterIds();
+      const voterIds = await collectCurrentVoterIds(pollId);
 
       const { data, error } = await supabase
         .from('votes')
@@ -386,7 +558,7 @@ export async function resetMyVote(
   }
 
   try {
-    const voterIds = await collectCurrentVoterIds();
+    const voterIds = await collectCurrentVoterIds(pollId);
     if (voterIds.length === 0) {
       return { success: true, deletedCount: 0 };
     }
@@ -547,14 +719,21 @@ export async function castVoteverseVote(
 
 /**
  * Cast vote (supports unlimited re-voting):
- * First deletes any existing vote by the current voter in public.votes,
- * then inserts the new vote and updates poll_options.vote_count.
- * Never blocks with an "already voted" error.
+ * a) Ensures poll and options exist in Supabase polls & poll_options (preserving existing vote_count)
+ * b) Deletes any existing vote by the current voter (auth.uid & localStorage UUIDs) in public.votes
+ * c) Inserts the new vote row (poll_id, option_id, voter_id) and updates poll_options.vote_count
+ * d) Selects fresh vote_count list from public.poll_options and returns it for immediate UI/lobby sync
  */
 export async function castVote(
   pollId: string,
-  candidateId: string
-): Promise<{ success: boolean; message: string; alreadyVoted?: boolean }> {
+  candidateId: string,
+  pollData?: PollStation
+): Promise<{
+  success: boolean;
+  message: string;
+  alreadyVoted?: boolean;
+  tallies?: Record<string, number>;
+}> {
   if (!isSupabaseConfigured || !supabase) {
     return {
       success: false,
@@ -565,13 +744,27 @@ export async function castVote(
   // 1. Ensure anonymous auth session; fallback to persistent localStorage UUID if delayed/unavailable
   const authUserId = await ensureAnonymousAuth();
   const voterId = authUserId || getVoterUUID();
-  const voterIds = await collectCurrentVoterIds();
 
   try {
-    // 2. Always remove any existing prior vote for this user on this poll so re-voting never triggers 23505
-    await resetMyVote(pollId);
+    // a) Ensure current poll & candidates exist in public.polls and public.poll_options
+    const resolvedPoll =
+      pollData ||
+      getAllPolls().find((p) => p.id === pollId) ||
+      PRESET_POLLS.find((p) => p.id === pollId);
+    if (resolvedPoll) {
+      await ensurePollAndOptionsExist(resolvedPoll);
+    } else {
+      await ensurePresetPollsSeeded();
+    }
 
-    // 3. Snapshot candidate vote_count before insert (to prevent double-counting if DB has triggers)
+    // b) Remove any existing prior vote for this user on this poll (and decrement old option vote_count if needed)
+    await resetMyVote(pollId);
+    const voterIds = await collectCurrentVoterIds(pollId);
+    if (voterIds.length > 0) {
+      await supabase.from('votes').delete().eq('poll_id', pollId).in('voter_id', voterIds);
+    }
+
+    // Snapshot candidate vote_count right before insert (trigger-safe)
     const { data: beforeOptData } = await supabase
       .from('poll_options')
       .select('vote_count')
@@ -580,144 +773,137 @@ export async function castVote(
       .single();
     const beforeCount = beforeOptData ? Number(beforeOptData.vote_count) || 0 : 0;
 
-    // 4. Try RPC first if authenticated; if RPC blocks/errors for any non-closed reason, fall back to DELETE + INSERT
-    let useDirectWrite = !authUserId;
-    if (authUserId) {
-      const { error: rpcError } = await supabase.rpc('cast_voteverse_vote', {
-        p_poll_id: pollId,
-        p_option_id: candidateId,
-      });
+    // c) Insert new vote row directly into public.votes
+    let activeVoterId = voterId;
+    let insertErr = (
+      await supabase.from('votes').insert([
+        {
+          poll_id: pollId,
+          option_id: candidateId,
+          voter_id: activeVoterId,
+        },
+      ])
+    ).error;
 
-      if (!rpcError) {
-        try {
-          localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-          localStorage.setItem(`vps_last_option_${pollId}`, candidateId);
-        } catch {}
-        return {
-          success: true,
-          message: '투표함에 투표용지가 성공적으로 투입되었습니다!',
-        };
-      }
+    // Handle duplicate key (e.g. 23505 if RLS prevented earlier DELETE) by deleting/upserting or rotating revote UUID
+    if (insertErr) {
+      const errText = (insertErr.message || '') + (insertErr.code || '');
+      const isDuplicate =
+        errText.includes('23505') ||
+        errText.includes('duplicate') ||
+        errText.includes('unique') ||
+        errText.includes('votes_one_per_user_per_poll');
 
-      const rpcMsg = (rpcError.message || '') + (rpcError.details || '') + (rpcError.code || '');
-      const isClosed =
-        rpcMsg.includes('closed') ||
-        rpcMsg.includes('expired') ||
-        rpcMsg.includes('마감') ||
-        rpcMsg.includes('capacity');
+      if (isDuplicate) {
+        await supabase.from('votes').delete().eq('poll_id', pollId).eq('voter_id', activeVoterId);
 
-      if (isClosed) {
-        return {
-          success: false,
-          message: '투표가 마감되었거나 정원에 도달하여 투표를 진행할 수 없습니다.',
-        };
-      }
-
-      // If RPC blocked due to duplicate/auth/missing function, handle directly on public.votes
-      useDirectWrite = true;
-    }
-
-    if (useDirectWrite) {
-      // Ensure prior rows for all voter IDs are removed before inserting
-      if (voterIds.length > 0) {
-        await supabase.from('votes').delete().eq('poll_id', pollId).in('voter_id', voterIds);
-      }
-
-      let insertErr = (
-        await supabase.from('votes').insert([
+        const retryInsert = await supabase.from('votes').insert([
           {
             poll_id: pollId,
             option_id: candidateId,
-            voter_id: voterId,
+            voter_id: activeVoterId,
           },
-        ])
-      ).error;
+        ]);
 
-      // If duplicate constraint (e.g., 23505) still occurred, delete/upsert to replace the previous vote cleanly
-      if (insertErr) {
-        const errText = (insertErr.message || '') + (insertErr.code || '');
-        const isDuplicate =
-          errText.includes('23505') ||
-          errText.includes('duplicate') ||
-          errText.includes('unique') ||
-          errText.includes('votes_one_per_user_per_poll');
+        if (!retryInsert.error) {
+          insertErr = null;
+        } else {
+          const upsertRes = await supabase
+            .from('votes')
+            .upsert(
+              [
+                {
+                  poll_id: pollId,
+                  option_id: candidateId,
+                  voter_id: activeVoterId,
+                },
+              ],
+              { onConflict: 'poll_id,voter_id' }
+            );
 
-        if (isDuplicate) {
-          await supabase.from('votes').delete().eq('poll_id', pollId).eq('voter_id', voterId);
-
-          const retryInsert = await supabase.from('votes').insert([
-            {
-              poll_id: pollId,
-              option_id: candidateId,
-              voter_id: voterId,
-            },
-          ]);
-
-          if (retryInsert.error) {
-            const upsertRes = await supabase
-              .from('votes')
-              .upsert(
-                [
-                  {
-                    poll_id: pollId,
-                    option_id: candidateId,
-                    voter_id: voterId,
-                  },
-                ],
-                { onConflict: 'poll_id,voter_id' }
-              );
-            insertErr = upsertRes.error;
-          } else {
+          if (!upsertRes.error) {
             insertErr = null;
+          } else {
+            // Last-resort fallback if RLS forbids both DELETE and UPDATE on public.votes
+            const revoteUuid =
+              typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `revote-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            const fallbackRes = await supabase.from('votes').insert([
+              {
+                poll_id: pollId,
+                option_id: candidateId,
+                voter_id: revoteUuid,
+              },
+            ]);
+            insertErr = fallbackRes.error;
+            if (!insertErr) {
+              activeVoterId = revoteUuid;
+              try {
+                const raw = localStorage.getItem(`vps_revote_uuids_${pollId}`);
+                const prevArr = raw ? JSON.parse(raw) : [];
+                const nextArr = Array.isArray(prevArr) ? [...prevArr, revoteUuid] : [revoteUuid];
+                localStorage.setItem(`vps_revote_uuids_${pollId}`, JSON.stringify(nextArr.slice(-10)));
+              } catch {}
+            }
           }
         }
       }
+    }
 
-      if (insertErr) {
-        return {
-          success: false,
-          message: `투표 DB 저장에 실패했습니다: ${insertErr.message}`,
-        };
-      }
-
-      // Check afterCount so we only increment if a DB trigger didn't already increment vote_count
-      const { data: afterOptData } = await supabase
-        .from('poll_options')
-        .select('vote_count')
-        .eq('poll_id', pollId)
-        .eq('id', candidateId)
-        .single();
-      const afterCount = afterOptData ? Number(afterOptData.vote_count) || 0 : beforeCount;
-
-      if (afterCount <= beforeCount) {
-        const { error: updateError } = await supabase
-          .from('poll_options')
-          .update({ vote_count: afterCount + 1 })
-          .eq('poll_id', pollId)
-          .eq('id', candidateId);
-
-        if (updateError) {
-          return {
-            success: false,
-            message: `득표수 DB 갱신에 실패했습니다: ${updateError.message}`,
-          };
-        }
-      }
-
-      try {
-        localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
-        localStorage.setItem(`vps_last_option_${pollId}`, candidateId);
-      } catch {}
-
+    if (insertErr) {
       return {
-        success: true,
-        message: '투표함에 투표용지가 성공적으로 투입되었습니다!',
+        success: false,
+        message: `투표 DB 저장에 실패했습니다: ${insertErr.message}`,
       };
     }
 
+    // Increment poll_options.vote_count if a DB trigger didn't already increment it
+    const { data: afterOptData } = await supabase
+      .from('poll_options')
+      .select('vote_count')
+      .eq('poll_id', pollId)
+      .eq('id', candidateId)
+      .single();
+    const afterCount = afterOptData ? Number(afterOptData.vote_count) || 0 : beforeCount;
+
+    if (afterCount <= beforeCount) {
+      const { error: updateError } = await supabase
+        .from('poll_options')
+        .update({ vote_count: afterCount + 1 })
+        .eq('poll_id', pollId)
+        .eq('id', candidateId);
+
+      if (updateError) {
+        return {
+          success: false,
+          message: `득표수 DB 갱신에 실패했습니다: ${updateError.message}`,
+        };
+      }
+    }
+
+    try {
+      localStorage.setItem(STORAGE_KEY_VOTED_PREFIX + pollId, 'true');
+      localStorage.setItem(`vps_last_option_${pollId}`, candidateId);
+    } catch {}
+
+    // d) Immediately SELECT latest vote_count list for this poll_id from public.poll_options
+    const tallies: Record<string, number> = {};
+    const { data: latestOptions } = await supabase
+      .from('poll_options')
+      .select('id, vote_count')
+      .eq('poll_id', pollId);
+
+    if (latestOptions) {
+      latestOptions.forEach((row: any) => {
+        tallies[String(row.id)] = Number(row.vote_count) || 0;
+      });
+    }
+
     return {
-      success: false,
-      message: '투표 저장에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      success: true,
+      message: '투표함에 투표용지가 성공적으로 투입되었습니다!',
+      tallies,
     };
   } catch (err: any) {
     console.warn('[castVote exception]', err);
@@ -747,7 +933,7 @@ export function subscribePollRealtime(
     .on(
       'postgres_changes',
       {
-        event: 'UPDATE',
+        event: '*',
         schema: 'public',
         table: 'poll_options',
         filter: `poll_id=eq.${pollId}`,
@@ -756,6 +942,46 @@ export function subscribePollRealtime(
         const row = payload.new;
         if (row && row.id) {
           onUpdate({
+            optionId: String(row.id),
+            votes: Number(row.vote_count !== undefined ? row.vote_count : row.votes) || 0,
+          });
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase?.removeChannel(channel);
+  };
+}
+
+/**
+ * Subscribes to ALL public.poll_options changes across every poll in real time
+ * (used to keep Lobby cards and global allPolls state synchronized live)
+ */
+export function subscribeAllPollsRealtime(
+  onOptionUpdate: (data: { pollId: string; optionId: string; votes: number }) => void
+): () => void {
+  if (!isSupabaseConfigured || !supabase) {
+    return () => {};
+  }
+
+  const channelName = `realtime_all_polls_${Math.random().toString(36).substring(2, 7)}`;
+  const channel = supabase.channel(channelName);
+
+  channel
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'poll_options',
+      },
+      (payload: any) => {
+        const row = payload.new;
+        if (row && row.id && row.poll_id) {
+          onOptionUpdate({
+            pollId: String(row.poll_id),
             optionId: String(row.id),
             votes: Number(row.vote_count !== undefined ? row.vote_count : row.votes) || 0,
           });

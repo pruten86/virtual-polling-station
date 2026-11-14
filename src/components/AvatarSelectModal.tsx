@@ -11,12 +11,12 @@ import {
   fetchPollsAsync,
   BETA_DISCLAIMER_TEXT,
   checkPoliticalContent,
-  getActiveOfficialChannel,
   formatRemainingTime,
 } from '../data/presetPolls';
 import {
   fetchVoteversePolls,
   createVoteversePoll,
+  subscribeAllPollsRealtime,
 } from '../lib/voteverseBackend';
 import {
   UserCheck,
@@ -44,6 +44,8 @@ import {
 
 interface AvatarSelectModalProps {
   initialPollId?: string | null;
+  externalPolls?: PollStation[];
+  onPollsUpdated?: (polls: PollStation[]) => void;
   onEnter: (nickname: string, avatarType: AvatarType, selectedPoll: PollStation) => void;
 }
 
@@ -57,6 +59,8 @@ const DURATION_OPTIONS = [
 
 export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   initialPollId,
+  externalPolls,
+  onPollsUpdated,
   onEnter,
 }) => {
   // 1. Nickname state with auto-generation
@@ -64,20 +68,50 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarType>('male');
 
   // 2. Polls & Tabs
-  const [polls, setPolls] = useState<PollStation[]>(() => getAllPolls());
+  const [polls, setPolls] = useState<PollStation[]>(() =>
+    externalPolls && externalPolls.length > 0 ? externalPolls : getAllPolls()
+  );
   const [activeTab, setActiveTab] = useState<'public' | 'private' | 'create'>('public');
 
   // Set of unlocked private poll IDs
   const [unlockedPrivatePollIds, setUnlockedPrivatePollIds] = useState<Set<string>>(() => new Set());
 
-  // Periodic tick for live countdown timer & auto-purge of expired polls
+  // Sync if parent passes updated polls
+  useEffect(() => {
+    if (externalPolls && externalPolls.length > 0) {
+      setPolls(externalPolls);
+    }
+  }, [externalPolls]);
+
+  // Periodic tick for live countdown timer, DB fetch on lobby open, and global poll_options Realtime subscription
   const [, setTick] = useState<number>(0);
   useEffect(() => {
-    // Initial fetch from Supabase (category <> 'private')
+    let isMounted = true;
+
+    // Fetch all polls & fresh poll_options vote_counts from Supabase whenever Lobby opens
     fetchVoteversePolls().then((fetched) => {
-      if (fetched && fetched.length > 0) {
+      if (isMounted && fetched && fetched.length > 0) {
         setPolls(fetched);
+        onPollsUpdated?.(fetched);
       }
+    });
+
+    // Subscribe to live public.poll_options updates across all polls while Lobby is open
+    const unsubscribeAll = subscribeAllPollsRealtime(({ pollId, optionId, votes }) => {
+      if (!isMounted) return;
+      setPolls((prev) => {
+        const next = prev.map((p) => {
+          if (p.id !== pollId) return p;
+          return {
+            ...p,
+            candidates: p.candidates.map((c) => (c.id === optionId ? { ...c, votes } : c)),
+          };
+        });
+        queueMicrotask(() => {
+          if (isMounted) onPollsUpdated?.(next);
+        });
+        return next;
+      });
     });
 
     const timer = setInterval(() => {
@@ -85,8 +119,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       const now = Date.now();
       setPolls((prev) => prev.filter((p) => !p.expiresAt || p.expiresAt > now));
     }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+
+    return () => {
+      isMounted = false;
+      unsubscribeAll();
+      clearInterval(timer);
+    };
+  }, [onPollsUpdated]);
 
   // Selected Poll
   const [selectedPollId, setSelectedPollId] = useState<string>(() => {
@@ -356,8 +395,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
       if (adminAuthModal.type === 'delete') {
         deletePollAsync(targetPoll.id);
-        const updatedPolls = getAllPolls();
-        setPolls(updatedPolls);
+        setPolls((prev) => prev.filter((p) => p.id !== targetPoll.id));
         if (selectedPollId === targetPoll.id) {
           setSelectedPollId('poll-lunch');
         }
@@ -438,7 +476,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     };
 
     savePollAsync(updatedPoll);
-    setPolls(getAllPolls());
+    setPolls((prev) => prev.map((p) => (p.id === updatedPoll.id ? updatedPoll : p)));
     setEditingPoll(null);
   };
 
@@ -493,12 +531,14 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   let selectedPollChannelLabel = '';
 
   if (selectedPoll.isOfficial) {
-    const chInfo = getActiveOfficialChannel(selectedPoll.id, selectedPoll.candidates);
-    selectedPollDisplayTotal = chInfo.totalCumulativeVotes;
-    selectedPollChannelLabel = `제${chInfo.activeChannelIndex}투표소 • ${chInfo.channelVotes} / 100명 (누적 ${chInfo.totalCumulativeVotes}명)`;
+    const dbTotal = selectedPoll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
+    const activeChannelIndex = Math.floor(dbTotal / 100) + 1;
+    const channelVotes = dbTotal % 100;
+    selectedPollDisplayTotal = dbTotal;
+    selectedPollChannelLabel = `제${activeChannelIndex}투표소 • ${channelVotes} / 100명 (누적 ${dbTotal}명)`;
     isSelectedPollFull = false;
   } else {
-    selectedPollDisplayTotal = selectedPoll.candidates.reduce((s, c) => s + c.votes, 0);
+    selectedPollDisplayTotal = selectedPoll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
     selectedPollCapacity = selectedPoll.maxVoters || 100;
     isSelectedPollFull = selectedPollDisplayTotal >= selectedPollCapacity;
   }
@@ -628,12 +668,14 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                   let isFull = false;
 
                   if (poll.isOfficial) {
-                    const chData = getActiveOfficialChannel(poll.id, poll.candidates);
-                    channelBadge = `제${chData.activeChannelIndex}투표소`;
-                    voterInfoText = `${channelBadge} • ${chData.channelVotes} / 100명 (누적 ${chData.totalCumulativeVotes}명)`;
+                    const dbTotal = poll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
+                    const activeChannelIndex = Math.floor(dbTotal / 100) + 1;
+                    const channelVotes = dbTotal % 100;
+                    channelBadge = `제${activeChannelIndex}투표소`;
+                    voterInfoText = `${channelBadge} • ${channelVotes} / 100명 (누적 ${dbTotal}명)`;
                     isFull = false;
                   } else {
-                    const totalVotes = poll.candidates.reduce((s, c) => s + c.votes, 0);
+                    const totalVotes = poll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
                     const maxCap = poll.maxVoters || 100;
                     isFull = totalVotes >= maxCap;
                     voterInfoText = `참여: ${totalVotes} / ${maxCap}명`;
