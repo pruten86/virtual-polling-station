@@ -23,6 +23,8 @@ import {
   checkHasVotedVoteverse,
   fetchPollTalliesFromDB,
   joinMultiplayerRoom,
+  getMultiplayerSessionId,
+  RemotePlayer,
   MultiplayerRoomHandle,
   fetchGuestbook,
   postGuestbookMessage,
@@ -31,7 +33,6 @@ import {
   resetMyVote,
   clearLocalVoteCache,
 } from './lib/voteverseBackend';
-import { getMultiplayerSessionId } from './lib/supabase';
 
 import { AvatarSelectModal } from './components/AvatarSelectModal';
 import { SignatureModal } from './components/SignatureModal';
@@ -248,15 +249,26 @@ export default function App() {
       {
         controller: CharacterController;
         nameTag: THREE.Sprite;
+        nickname: string;
+        avatarType: 'male' | 'female';
         targetX: number;
         targetZ: number;
         targetRotY: number;
         isMoving: boolean;
-        lastMoveBroadcastAt?: number;
+        lastSeen: number;
       }
     >
   >(new Map());
   const roomHandleRef = useRef<MultiplayerRoomHandle | null>(null);
+  const presenceCountRef = useRef<number>(1);
+  const nicknameRef = useRef<string>(nickname);
+  useEffect(() => {
+    nicknameRef.current = nickname;
+  }, [nickname]);
+  const avatarTypeRef = useRef<AvatarType>(avatarType);
+  useEffect(() => {
+    avatarTypeRef.current = avatarType;
+  }, [avatarType]);
   const lastBroadcastTimeRef = useRef<number>(0);
   const lastPresenceTrackTimeRef = useRef<number>(0);
   const lastBroadcastPosRef = useRef<{ x: number; z: number; rotY: number }>({
@@ -511,83 +523,102 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection (using per-tab multiplayerPeerId)
+  const showToastRef = useRef(showToast);
   useEffect(() => {
-    if (!hasEntered) return;
+    showToastRef.current = showToast;
+  }, [showToast]);
+
+  // 1. Supabase Realtime Presence & Broadcast Multiplayer Room Connection
+  // Strictly depends only on [currentPoll?.id, hasEntered, isLobbyOpen] so tally/poll object updates never disconnect WebSocket
+  useEffect(() => {
+    if (!hasEntered || isLobbyOpen || !currentPoll?.id) return;
+
+    const currentMap = remoteAvatarsRef.current;
+
+    const refreshOnlineCount = () => {
+      const nextCount = Math.max(presenceCountRef.current, 1 + currentMap.size);
+      setOnlineCount((prev) => (prev === nextCount ? prev : nextCount));
+    };
+
+    const upsertRemoteAvatar = (peer: RemotePlayer) => {
+      if (!peer || !peer.userId || peer.userId === multiplayerPeerId) return;
+
+      const existing = currentMap.get(peer.userId);
+      if (!existing) {
+        const controller = createProceduralAvatar(peer.avatarType);
+        controller.group.position.set(peer.x, 0, peer.z);
+        controller.lookAtAngle(peer.rotY);
+
+        const nameTag = createNameTagSprite(peer.nickname || '선거인');
+        controller.group.add(nameTag);
+
+        if (sceneRef.current) {
+          sceneRef.current.add(controller.group);
+        }
+
+        currentMap.set(peer.userId, {
+          controller,
+          nameTag,
+          nickname: peer.nickname || '선거인',
+          avatarType: peer.avatarType,
+          targetX: peer.x,
+          targetZ: peer.z,
+          targetRotY: peer.rotY,
+          isMoving: Boolean(peer.isMoving),
+          lastSeen: Date.now(),
+        });
+      } else {
+        if (peer.nickname && peer.nickname !== existing.nickname) {
+          existing.controller.group.remove(existing.nameTag);
+          const nextTag = createNameTagSprite(peer.nickname);
+          existing.controller.group.add(nextTag);
+          existing.nameTag = nextTag;
+          existing.nickname = peer.nickname;
+        }
+        existing.targetX = peer.x;
+        existing.targetZ = peer.z;
+        existing.targetRotY = peer.rotY;
+        existing.isMoving = Boolean(peer.isMoving);
+        existing.lastSeen = Date.now();
+      }
+
+      refreshOnlineCount();
+    };
+
+    const removeRemoteAvatar = (userId: string) => {
+      const entry = currentMap.get(userId);
+      if (entry) {
+        if (sceneRef.current) {
+          sceneRef.current.remove(entry.controller.group);
+        }
+        currentMap.delete(userId);
+      }
+      presenceCountRef.current = Math.min(presenceCountRef.current, 1 + currentMap.size);
+      refreshOnlineCount();
+    };
 
     const room = joinMultiplayerRoom(
       currentPoll.id,
       {
         userId: multiplayerPeerId,
-        nickname,
-        avatarType,
+        nickname: nicknameRef.current,
+        avatarType: avatarTypeRef.current,
         x: playerRef.current ? playerRef.current.group.position.x : -6.5,
         z: playerRef.current ? playerRef.current.group.position.z : 0.5,
         rotY: playerRef.current ? playerRef.current.group.rotation.y : Math.PI,
       },
       {
-        onPresenceSync: (remotePlayers) => {
-          setOnlineCount(remotePlayers.length + 1);
-
-          const currentMap = remoteAvatarsRef.current;
-          const activeIds = new Set(remotePlayers.map((p) => p.userId));
-
-          // A. Remove avatars of users who left presence
-          for (const [id, item] of currentMap.entries()) {
-            if (!activeIds.has(id)) {
-              if (sceneRef.current) {
-                sceneRef.current.remove(item.controller.group);
-              }
-              currentMap.delete(id);
-            }
-          }
-
-          // B. Add new remote avatars AND unconditionally update targetX/targetZ/targetRotY for existing avatars
-          for (const p of remotePlayers) {
-            const existingEntry = currentMap.get(p.userId);
-            if (!existingEntry) {
-              const controller = createProceduralAvatar(p.avatarType);
-              controller.group.position.set(p.x, 0, p.z);
-              controller.lookAtAngle(p.rotY);
-
-              const nameTag = createNameTagSprite(p.nickname);
-              controller.group.add(nameTag);
-
-              if (sceneRef.current) {
-                sceneRef.current.add(controller.group);
-              }
-
-              currentMap.set(p.userId, {
-                controller,
-                nameTag,
-                targetX: p.x,
-                targetZ: p.z,
-                targetRotY: p.rotY,
-                isMoving: Boolean(p.isMoving),
-              });
-            } else {
-              existingEntry.targetX = p.x;
-              existingEntry.targetZ = p.z;
-              existingEntry.targetRotY = p.rotY;
-              existingEntry.isMoving = Boolean(p.isMoving);
-            }
-          }
-        },
-        onPlayerMove: ({ userId, x, z, rotY, isMoving }) => {
-          const entry = remoteAvatarsRef.current.get(userId);
-          if (entry) {
-            entry.targetX = x;
-            entry.targetZ = z;
-            entry.targetRotY = rotY;
-            entry.isMoving = Boolean(isMoving);
-            entry.lastMoveBroadcastAt = performance.now();
-          }
+        onPeerState: upsertRemoteAvatar,
+        onPeerLeave: removeRemoteAvatar,
+        onPresenceCount: (count) => {
+          presenceCountRef.current = count;
+          refreshOnlineCount();
         },
         onVoteCast: ({ userId, nickname: voterName }) => {
           // Toast notification ONLY - do NOT locally increment candidate tallies here
           if (userId !== multiplayerPeerId) {
             sounds.playChime();
-            showToast(`🗳️ [${voterName}]님이 소중한 한 표를 행사했습니다!`);
+            showToastRef.current(`🗳️ [${voterName}]님이 소중한 한 표를 행사했습니다!`);
           }
         },
       }
@@ -595,20 +626,53 @@ export default function App() {
 
     roomHandleRef.current = room;
 
+    // 400ms heartbeat: continuously broadcast latest state & prune >5s inactive peers
+    const heartbeatTimer = window.setInterval(() => {
+      if (room.isSubscribed()) {
+        const player = playerRef.current;
+        room.sendPlayerState({
+          nickname: nicknameRef.current,
+          avatarType: avatarTypeRef.current,
+          x: player ? player.group.position.x : -6.5,
+          z: player ? player.group.position.z : 0.5,
+          rotY: player ? player.group.rotation.y : Math.PI,
+          isMoving: isMovingRef.current,
+        });
+      }
+
+      const now = Date.now();
+      let removedAny = false;
+      for (const [id, entry] of currentMap.entries()) {
+        if (now - entry.lastSeen > 5000) {
+          if (sceneRef.current) {
+            sceneRef.current.remove(entry.controller.group);
+          }
+          currentMap.delete(id);
+          removedAny = true;
+        }
+      }
+      if (removedAny) {
+        presenceCountRef.current = Math.min(presenceCountRef.current, 1 + currentMap.size);
+        refreshOnlineCount();
+      }
+    }, 400);
+
     return () => {
+      window.clearInterval(heartbeatTimer);
       room.leave();
       roomHandleRef.current = null;
 
       // Clean up remote avatars on leaving/switching room
       if (sceneRef.current) {
-        for (const item of remoteAvatarsRef.current.values()) {
+        for (const item of currentMap.values()) {
           sceneRef.current.remove(item.controller.group);
         }
       }
-      remoteAvatarsRef.current.clear();
+      currentMap.clear();
+      presenceCountRef.current = 1;
       setOnlineCount(1);
     };
-  }, [hasEntered, currentPoll.id, nickname, avatarType, multiplayerPeerId, showToast]);
+  }, [currentPoll?.id, hasEntered, isLobbyOpen, multiplayerPeerId]);
 
   const totalVotes = candidates.reduce((s, c) => s + c.votes, 0);
   const maxCapacity = currentPoll.maxVoters || 100;
@@ -1066,14 +1130,28 @@ export default function App() {
           if (hasBroadcastDelta && now - lastBroadcastTimeRef.current >= 80) {
             lastBroadcastTimeRef.current = now;
             lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
-            room.sendMove(curX, curZ, curRot, isMoving);
+            room.sendPlayerState({
+              nickname: nicknameRef.current,
+              avatarType: avatarTypeRef.current,
+              x: curX,
+              z: curZ,
+              rotY: curRot,
+              isMoving,
+            });
             lastSentMovingRef.current = true;
           }
 
           if (hasPresenceDelta && now - lastPresenceTrackTimeRef.current >= 250) {
             lastPresenceTrackTimeRef.current = now;
             lastPresencePosRef.current = { x: curX, z: curZ, rotY: curRot };
-            room.updatePresence(curX, curZ, curRot, isMoving);
+            room.updatePresence(
+              curX,
+              curZ,
+              curRot,
+              isMoving,
+              nicknameRef.current,
+              avatarTypeRef.current
+            );
             lastSentMovingRef.current = true;
           }
 
@@ -1083,8 +1161,22 @@ export default function App() {
             lastPresenceTrackTimeRef.current = now;
             lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
             lastPresencePosRef.current = { x: curX, z: curZ, rotY: curRot };
-            room.sendMove(curX, curZ, curRot, false);
-            room.updatePresence(curX, curZ, curRot, false);
+            room.sendPlayerState({
+              nickname: nicknameRef.current,
+              avatarType: avatarTypeRef.current,
+              x: curX,
+              z: curZ,
+              rotY: curRot,
+              isMoving: false,
+            });
+            room.updatePresence(
+              curX,
+              curZ,
+              curRot,
+              false,
+              nicknameRef.current,
+              avatarTypeRef.current
+            );
           }
         }
 
@@ -1139,7 +1231,7 @@ export default function App() {
         }
       }
 
-      // Update Remote Players' 3D Avatars (Smooth lerp(0.2) interpolation + walk animation)
+      // Update Remote Players' 3D Avatars (Smooth lerp(0.22) interpolation + walk animation)
       for (const entry of remoteAvatarsRef.current.values()) {
         const dist = Math.hypot(
           entry.targetX - entry.controller.group.position.x,
@@ -1149,12 +1241,12 @@ export default function App() {
         entry.controller.group.position.x = THREE.MathUtils.lerp(
           entry.controller.group.position.x,
           entry.targetX,
-          0.2
+          0.22
         );
         entry.controller.group.position.z = THREE.MathUtils.lerp(
           entry.controller.group.position.z,
           entry.targetZ,
-          0.2
+          0.22
         );
 
         const curAngle = entry.controller.group.rotation.y;
@@ -1163,7 +1255,7 @@ export default function App() {
         while (diff > Math.PI) diff -= Math.PI * 2;
         entry.controller.lookAtAngle(curAngle + diff * 0.22);
 
-        const isRemoteMoving = dist >= 0.03;
+        const isRemoteMoving = dist >= 0.03 || Boolean(entry.isMoving);
         entry.controller.update(isRemoteMoving, delta, 4.8);
       }
 

@@ -109,19 +109,20 @@ export function getVoterUUID(): string {
 }
 
 /**
- * Returns a unique per-tab/per-window ID via sessionStorage for 100% distinct multiplayer Presence avatars
+ * Returns a unique per-tab/per-device ID via sessionStorage ('mp_' + randomUUID)
+ * Ensures desktop, mobile, and multiple tabs always have distinct multiplayer session IDs
  */
 export function getMultiplayerSessionId(): string {
-  const KEY = 'voteverse_multiplayer_tab_id_v1';
+  const KEY = 'voteverse_multiplayer_session_id_v1';
   try {
     let id = sessionStorage.getItem(KEY);
-    if (!id) {
-      id = `peer_${generateUuidV4()}`;
+    if (!id || !id.startsWith('mp_')) {
+      id = `mp_${generateUuidV4()}`;
       sessionStorage.setItem(KEY, id);
     }
     return id;
   } catch {
-    return `peer_${generateUuidV4()}`;
+    return `mp_${generateUuidV4()}`;
   }
 }
 
