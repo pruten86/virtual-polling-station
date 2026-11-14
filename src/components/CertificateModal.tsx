@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { AvatarType } from '../types';
 import { sounds } from '../sound';
-import { Download, Award, X, Sparkles } from 'lucide-react';
+import { Download, Award, X, Sparkles, BarChart3, Vote, Footprints } from 'lucide-react';
 
 interface CertificateModalProps {
   nickname: string;
@@ -10,6 +10,8 @@ interface CertificateModalProps {
   pollTitle?: string;
   onClose: () => void;
   onRestart: () => void;
+  onOpenResults?: () => void;
+  onOpenLobby?: () => void;
 }
 
 export const CertificateModal: React.FC<CertificateModalProps> = ({
@@ -19,6 +21,8 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
   pollTitle,
   onClose,
   onRestart,
+  onOpenResults,
+  onOpenLobby,
 }) => {
   const certCardRef = useRef<HTMLDivElement | null>(null);
 
@@ -137,134 +141,198 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5 sm:p-7 text-slate-100 animate-in fade-in zoom-in-95 duration-200">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
-        >
-          <X className="w-5 h-5" />
-        </button>
-
-        {/* Modal Top Header */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0">
-            <Award className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-white">디지털 투표확인증 발급</h2>
-            <p className="text-xs text-slate-400">소중한 한 표를 행사해 주셔서 진심으로 감사합니다!</p>
-          </div>
-        </div>
-
-        {/* The Printable / Viewable Certificate Card */}
-        <div
-          ref={certCardRef}
-          className="relative bg-[#fffdf9] text-stone-900 rounded-xl border-4 border-[#c5a059] p-6 shadow-xl mb-5 select-none font-serif"
-        >
-          {/* Inner hairline border */}
-          <div className="border border-[#c5a059]/60 p-5 rounded-lg text-center relative">
-            {/* Top Emblem */}
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-sky-600 text-white font-sans font-bold text-sm mb-3 shadow-sm">
-              선거
+    <div
+      onClick={() => {
+        sounds.playClick();
+        onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl text-slate-100 animate-in fade-in zoom-in-95 duration-200 flex flex-col"
+      >
+        {/* Fixed Sticky Header with Prominent Close Button */}
+        <div className="sticky top-0 z-20 flex items-center justify-between gap-2 px-4 sm:px-6 py-3.5 bg-slate-900/95 backdrop-blur-md border-b border-slate-800/90">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0">
+              <Award className="w-5 h-5" />
             </div>
-
-            {/* Title */}
-            <h1 className="text-2xl sm:text-3xl font-black tracking-widest text-stone-900 mb-1 font-cert">
-              투  표  확  인  증
-            </h1>
-            <p className="text-[11px] font-sans text-stone-500 tracking-wider mb-5">
-              Certificate of Voting Participation
-            </p>
-
-            {/* Voter Avatar & Info */}
-            <div className="bg-stone-50/90 border border-stone-200/80 rounded-xl p-3.5 mb-5 font-sans text-left flex items-center gap-4">
-              {/* Avatar Icon */}
-              <div className="w-14 h-14 rounded-full bg-slate-200 border-2 border-stone-300 flex items-center justify-center shrink-0 overflow-hidden">
-                {avatarType === 'male' ? (
-                  <div className="relative w-full h-full flex items-center justify-center bg-sky-950">
-                    <div className="w-6 h-6 rounded-full bg-[#ffdfc4] relative -top-1">
-                      <div className="absolute -top-1 inset-x-0 h-3 bg-[#221f1e] rounded-t-full" />
-                    </div>
-                    <div className="absolute bottom-0 w-8 h-4 bg-[#1e3a8a] rounded-t-md" />
-                  </div>
-                ) : (
-                  <div className="relative w-full h-full flex items-center justify-center bg-amber-950">
-                    <div className="w-6 h-6 rounded-full bg-[#ffdfc4] relative -top-1">
-                      <div className="absolute -top-1 -inset-x-1 h-4 bg-[#3d271d] rounded-t-full" />
-                    </div>
-                    <div className="absolute bottom-0 w-8 h-4 bg-[#d6bba2] rounded-t-md" />
-                  </div>
-                )}
-              </div>
-
-              {/* Info text */}
-              <div className="space-y-1 text-xs">
-                <div className="flex gap-2">
-                  <span className="text-stone-500">선거인:</span>
-                  <span className="font-bold text-stone-900">{nickname}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-stone-500">투표일시:</span>
-                  <span className="font-medium text-stone-800">{timestamp}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-stone-500">투표안건:</span>
-                  <span className="text-stone-800 font-semibold truncate max-w-[200px]">{pollTitle || '가상 모의선거'}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Korean Certificate Declaration */}
-            <p className="text-xs sm:text-sm text-stone-800 leading-relaxed font-cert mb-6">
-              위 사람은 대한민국 헌법과 공직선거법에 의거하여,<br />
-              가상 모의투표소에서 국민의 소중한 권리인 투표에<br />
-              성실히 참여하였음을 확인합니다.
-            </p>
-
-            {/* Authority & Seal */}
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <span className="text-sm font-bold text-sky-950 tracking-wider font-cert">
-                가상선거관리위원회위원장
-              </span>
-              <div className="w-10 h-10 border-2 border-red-600 text-red-600 flex flex-col items-center justify-center text-[8px] font-bold leading-tight font-serif rounded-xs shadow-xs">
-                <span>가상선관</span>
-                <span>위원회인</span>
-              </div>
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-lg font-bold text-white truncate">디지털 투표확인증 발급</h2>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">소중한 한 표를 행사해 주셔서 감사합니다!</p>
             </div>
           </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-2.5">
-          <button
-            type="button"
-            onClick={handleDownloadImage}
-            className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-white font-bold text-sm shadow-lg shadow-amber-500/25 cursor-pointer transition"
-          >
-            <Download className="w-4 h-4" />
-            <span>확인증 이미지 (PNG) 저장</span>
-          </button>
 
           <button
             type="button"
             onClick={() => {
               sounds.playClick();
-              onRestart();
+              onClose();
             }}
-            className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600/80 text-slate-200 hover:text-white text-xs font-bold transition cursor-pointer shrink-0"
+            aria-label="닫기"
           >
-            <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-            <span>재투표하기</span>
+            <X className="w-4 h-4" />
+            <span>닫기</span>
           </button>
         </div>
 
-        {/* Beta Disclaimer Note */}
-        <div className="mt-4 p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-center">
-          <p className="text-[11px] text-slate-400 font-medium leading-relaxed">
-            ※ [BETA] 본 서비스는 일상 의사결정 및 투표 절차 체험용 모의투표 웹앱이며, 실제 공직선거나 여론조사와 무관합니다.
-          </p>
+        {/* Scrollable Content */}
+        <div className="p-4 sm:p-6 space-y-4">
+          {/* The Printable / Viewable Certificate Card */}
+          <div
+            ref={certCardRef}
+            className="relative bg-[#fffdf9] text-stone-900 rounded-xl border-4 border-[#c5a059] p-4 sm:p-6 shadow-xl select-none font-serif"
+          >
+            {/* Inner hairline border */}
+            <div className="border border-[#c5a059]/60 p-3.5 sm:p-5 rounded-lg text-center relative">
+              {/* Top Emblem */}
+              <div className="inline-flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-sky-600 text-white font-sans font-bold text-xs sm:text-sm mb-2.5 shadow-sm">
+                선거
+              </div>
+
+              {/* Title */}
+              <h1 className="text-xl sm:text-3xl font-black tracking-widest text-stone-900 mb-1 font-cert">
+                투  표  확  인  증
+              </h1>
+              <p className="text-[10px] sm:text-[11px] font-sans text-stone-500 tracking-wider mb-4">
+                Certificate of Voting Participation
+              </p>
+
+              {/* Voter Avatar & Info */}
+              <div className="bg-stone-50/90 border border-stone-200/80 rounded-xl p-3 mb-4 font-sans text-left flex items-center gap-3 sm:gap-4">
+                {/* Avatar Icon */}
+                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-slate-200 border-2 border-stone-300 flex items-center justify-center shrink-0 overflow-hidden">
+                  {avatarType === 'male' ? (
+                    <div className="relative w-full h-full flex items-center justify-center bg-sky-950">
+                      <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#ffdfc4] relative -top-1">
+                        <div className="absolute -top-1 inset-x-0 h-3 bg-[#221f1e] rounded-t-full" />
+                      </div>
+                      <div className="absolute bottom-0 w-7 sm:w-8 h-3.5 sm:h-4 bg-[#1e3a8a] rounded-t-md" />
+                    </div>
+                  ) : (
+                    <div className="relative w-full h-full flex items-center justify-center bg-amber-950">
+                      <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#ffdfc4] relative -top-1">
+                        <div className="absolute -top-1 -inset-x-1 h-4 bg-[#3d271d] rounded-t-full" />
+                      </div>
+                      <div className="absolute bottom-0 w-7 sm:w-8 h-3.5 sm:h-4 bg-[#d6bba2] rounded-t-md" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Info text */}
+                <div className="space-y-1 text-xs min-w-0">
+                  <div className="flex gap-2">
+                    <span className="text-stone-500 shrink-0">선거인:</span>
+                    <span className="font-bold text-stone-900 truncate">{nickname}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-stone-500 shrink-0">투표일시:</span>
+                    <span className="font-medium text-stone-800 truncate">{timestamp}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-stone-500 shrink-0">투표안건:</span>
+                    <span className="text-stone-800 font-semibold truncate">{pollTitle || '가상 모의선거'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Korean Certificate Declaration */}
+              <p className="text-xs sm:text-sm text-stone-800 leading-relaxed font-cert mb-4">
+                위 사람은 대한민국 헌법과 공직선거법에 의거하여,<br />
+                가상 모의투표소에서 국민의 소중한 권리인 투표에<br />
+                성실히 참여하였음을 확인합니다.
+              </p>
+
+              {/* Authority & Seal */}
+              <div className="flex items-center justify-center gap-3 pt-1">
+                <span className="text-xs sm:text-sm font-bold text-sky-950 tracking-wider font-cert">
+                  가상선거관리위원회위원장
+                </span>
+                <div className="w-9 h-9 sm:w-10 sm:h-10 border-2 border-red-600 text-red-600 flex flex-col items-center justify-center text-[7px] sm:text-[8px] font-bold leading-tight font-serif rounded-xs shadow-xs">
+                  <span>가상선관</span>
+                  <span>위원회인</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Primary & Secondary Action Buttons */}
+          <div className="space-y-2.5">
+            {/* a) Primary Highlighted Button: Close modal & browse 3D polling station */}
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                onClose();
+              }}
+              className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-sky-500/30 cursor-pointer transition active:scale-[0.98]"
+            >
+              <Footprints className="w-4 h-4 shrink-0" />
+              <span>🚶 창 닫고 투표소 둘러보기</span>
+            </button>
+
+            {/* b) Open Live Results & Guestbook Modal */}
+            {onOpenResults && (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onOpenResults();
+                }}
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white font-bold text-sm shadow-md shadow-emerald-600/20 cursor-pointer transition active:scale-[0.98]"
+              >
+                <BarChart3 className="w-4 h-4 shrink-0" />
+                <span>📊 개표 전광판 & 방명록 보기</span>
+              </button>
+            )}
+
+            {/* c) Auxiliary Buttons Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-0.5">
+              <button
+                type="button"
+                onClick={handleDownloadImage}
+                className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-bold text-xs cursor-pointer transition whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5 shrink-0" />
+                <span>인증서 이미지 저장</span>
+              </button>
+
+              {onOpenLobby && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onOpenLobby();
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sky-300 font-semibold text-xs cursor-pointer transition whitespace-nowrap"
+                >
+                  <Vote className="w-3.5 h-3.5 shrink-0" />
+                  <span>다른 투표소 가기(로비)</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onRestart();
+                }}
+                className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-xs transition cursor-pointer whitespace-nowrap"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                <span>재투표하기</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Beta Disclaimer Note */}
+          <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-center">
+            <p className="text-[11px] text-slate-400 font-medium leading-relaxed">
+              ※ [BETA] 본 서비스는 일상 의사결정 및 투표 절차 체험용 모의투표 웹앱이며, 실제 공직선거나 여론조사와 무관합니다.
+            </p>
+          </div>
         </div>
       </div>
     </div>

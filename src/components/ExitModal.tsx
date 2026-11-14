@@ -22,8 +22,17 @@ export const ExitModal: React.FC<ExitModalProps> = ({
   onClose,
 }) => {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl text-slate-100 relative">
+    <div
+      onClick={() => {
+        sounds.playClick();
+        onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md max-h-[85dvh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl text-slate-100 relative"
+      >
         <button
           type="button"
           onClick={() => {

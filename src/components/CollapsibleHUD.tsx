@@ -21,6 +21,7 @@ interface CollapsibleHUDProps {
   onInteract: () => void;
   hasVoted: boolean;
   onOpenCertificate: () => void;
+  onOpenResults: () => void;
   onReset: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
@@ -42,6 +43,7 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   onInteract,
   hasVoted,
   onOpenCertificate,
+  onOpenResults,
   onReset,
   isMuted,
   onToggleMute,
@@ -73,22 +75,34 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   const getPromptLabel = () => {
     switch (activeZoneNear) {
       case 'desk':
-        return currentStep === 1 ? '본인 확인 서명하기' : '교부대 안내 확인';
+        return hasVoted
+          ? '1번 교부대 (투표 완료)'
+          : currentStep === 1
+          ? '본인 확인 서명하기'
+          : '교부대 안내 확인';
       case 'booth':
-        return currentStep === 2 ? '기표소 입장 및 투표하기' : '기표소 살펴보기';
+        return hasVoted
+          ? '2번 기표소 (투표 완료)'
+          : currentStep === 2
+          ? '기표소 입장 및 투표하기'
+          : '기표소 살펴보기';
       case 'box':
-        return currentStep === 3 ? '투표함에 용지 넣기' : '투표함 살펴보기';
+        return hasVoted
+          ? '✅ 투표 완료! 전광판 · 출구로 이동하세요'
+          : currentStep === 3
+          ? '투표함에 용지 넣기'
+          : '투표함 살펴보기';
       case 'billboard':
-        return '실시간 개표 결과 보기';
+        return '📊 개표 전광판 & 방명록 열기';
       case 'exit':
-        return hasVoted ? '출구로 나가기 (개표 · 로비)' : '출구로 이동 (다른 투표소)';
+        return '🚪 출구로 나가기 (다른 투표소 이동)';
       default:
         return '상호작용';
     }
   };
 
   return (
-    <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
+    <div className="absolute inset-0 z-20 pointer-events-none select-none overflow-hidden">
       {/* Top Header / Progress Timeline */}
       <div className="absolute top-2.5 sm:top-3 inset-x-2.5 sm:inset-x-8 flex flex-col items-center pointer-events-auto transition-all">
         <div className="w-full max-w-4xl bg-slate-900/90 border border-slate-700/80 rounded-2xl shadow-xl p-2 sm:p-3.5 backdrop-blur-md transition-all duration-200">
@@ -221,18 +235,22 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
               {steps.map((s) => {
                 const isPast = s.num < currentStep;
                 const isCurrent = s.num === currentStep;
+                const isResultsTab = s.num === 4;
 
-                return (
-                  <div
-                    key={s.num}
-                    className={`p-1.5 sm:p-2 rounded-xl border transition-all ${
-                      isCurrent
-                        ? 'bg-sky-500/15 border-sky-400 text-sky-200 ring-1 ring-sky-400/30 shadow-sm'
-                        : isPast
-                        ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                        : 'bg-slate-800/40 border-slate-700/60 text-slate-400'
-                    }`}
-                  >
+                const cardClasses = `p-1.5 sm:p-2 rounded-xl border transition-all ${
+                  isCurrent
+                    ? 'bg-sky-500/15 border-sky-400 text-sky-200 ring-1 ring-sky-400/30 shadow-sm'
+                    : isPast
+                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                    : 'bg-slate-800/40 border-slate-700/60 text-slate-400'
+                } ${
+                  isResultsTab
+                    ? 'cursor-pointer hover:bg-sky-500/25 hover:border-sky-300 active:scale-95'
+                    : ''
+                }`;
+
+                const innerContent = (
+                  <>
                     <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5">
                       <span
                         className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center text-[9px] sm:text-[10px] font-bold ${
@@ -250,8 +268,31 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                       </span>
                     </div>
                     <p className="text-[9px] sm:text-[10px] text-slate-400 hidden sm:block truncate">
-                      {s.sub}
+                      {isResultsTab ? '터치하여 전광판 열기' : s.sub}
                     </p>
+                  </>
+                );
+
+                if (isResultsTab) {
+                  return (
+                    <button
+                      key={s.num}
+                      type="button"
+                      onClick={() => {
+                        sounds.playClick();
+                        onOpenResults();
+                      }}
+                      className={cardClasses}
+                      title="개표 전광판 및 방명록 열기"
+                    >
+                      {innerContent}
+                    </button>
+                  );
+                }
+
+                return (
+                  <div key={s.num} className={cardClasses}>
+                    {innerContent}
                   </div>
                 );
               })}
@@ -260,23 +301,33 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
         </div>
       </div>
 
-      {/* Floating Action Trigger Prompt (within 1.8 units) */}
+      {/* Bottom-Center Zone Action Trigger Prompt (positioned cleanly above joystick & bottom dock) */}
       {activeZoneNear && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-16 pointer-events-auto">
-          <button
-            type="button"
-            onClick={() => {
-              sounds.playClick();
-              onInteract();
-            }}
-            className="flex items-center gap-3 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold text-sm sm:text-base shadow-2xl shadow-blue-500/40 border-2 border-white/20 active:scale-95 transition-all cursor-pointer"
-          >
-            <Sparkles className="w-5 h-5 text-yellow-300 shrink-0" />
-            <span>{getPromptLabel()}</span>
-            <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-white/20 text-xs font-mono">
-              Space 키
-            </span>
-          </button>
+        <div className="absolute bottom-36 sm:bottom-24 left-1/2 -translate-x-1/2 z-30 pointer-events-auto w-max max-w-[92vw]">
+          {hasVoted && activeZoneNear === 'box' ? (
+            <div className="px-4 py-2 rounded-full bg-slate-900/90 border border-emerald-500/40 text-emerald-300 text-xs font-bold shadow-xl backdrop-blur-md text-center">
+              {getPromptLabel()}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                onInteract();
+              }}
+              className={`flex items-center gap-2.5 px-5 py-3 sm:px-6 sm:py-3.5 rounded-2xl text-white font-bold text-xs sm:text-base shadow-2xl border-2 border-white/25 active:scale-95 transition-all cursor-pointer whitespace-nowrap ${
+                activeZoneNear === 'exit' || activeZoneNear === 'billboard'
+                  ? 'bg-gradient-to-r from-emerald-500 via-teal-600 to-sky-600 hover:from-emerald-400 hover:to-sky-500 shadow-emerald-500/35'
+                  : 'bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 shadow-blue-500/40'
+              }`}
+            >
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-300 shrink-0" />
+              <span>{getPromptLabel()}</span>
+              <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-white/20 text-xs font-mono">
+                Space 키
+              </span>
+            </button>
+          )}
         </div>
       )}
 

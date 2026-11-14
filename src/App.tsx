@@ -232,6 +232,14 @@ export default function App() {
     isExitModalOpenRef.current = isExitModalOpen;
   }, [isExitModalOpen]);
   const hasTouchedExitRef = useRef<boolean>(false);
+  const isCastingRef = useRef<boolean>(false);
+
+  const handleJoystickMove = useCallback((vec: { x: number; y: number }) => {
+    joystickVector.current = vec;
+  }, []);
+  const handleJoystickStop = useCallback(() => {
+    joystickVector.current = { x: 0, y: 0 };
+  }, []);
 
   // Multiplayer Realtime Room & Remote Avatars Map
   const remoteAvatarsRef = useRef<
@@ -612,11 +620,19 @@ export default function App() {
 
   // 3. 투표함(Zone 3)에 용지를 넣는 handleCastBallot 함수
   const handleCastBallot = useCallback(async () => {
+    if (isCastingRef.current || hasVotedRef.current) {
+      if (hasVotedRef.current) {
+        showToast('이미 소중한 한 표를 행사하셨습니다. 4번 개표 전광판을 확인하세요!');
+      }
+      return;
+    }
+
     if (!userVoteId) {
       showToast('기표된 후보 정보가 없습니다. 2번 기표소에서 기표를 완료해주세요!');
       return;
     }
 
+    isCastingRef.current = true;
     const selectedCandidate = candidates.find((c) => c.id === userVoteId) || { id: userVoteId };
 
     // Strict DB vote recording via castVote(currentPoll.id, selectedCandidate.id, currentPoll)
@@ -624,6 +640,7 @@ export default function App() {
 
     // Block only on genuine DB write error (never show certificate if DB failed)
     if (!res.success) {
+      isCastingRef.current = false;
       sounds.playWarning();
       const msg = res.message || '투표 저장에 실패했습니다. 잠시 후 다시 시도해주세요.';
       showToast(msg);
@@ -660,6 +677,7 @@ export default function App() {
     ballotDropProgressRef.current = 0;
 
     setTimeout(() => {
+      isCastingRef.current = false;
       // Celebratory Confetti & Victory Chime
       sounds.playChime();
       confetti({
@@ -1256,6 +1274,7 @@ export default function App() {
 
     if (isNewPoll) {
       // Reset voting flow for the new poll
+      isCastingRef.current = false;
       setCurrentStep(1);
       setHasBallot(false);
       setHasStamped(false);
@@ -1294,6 +1313,7 @@ export default function App() {
   // Re-vote / Reset for current poll (deletes user's DB vote, syncs tallies, resets state & moves avatar to Zone 1)
   const handleResetSimulation = async () => {
     sounds.playClick();
+    isCastingRef.current = false;
     const res = await resetMyVote(currentPoll.id, userVoteId || undefined);
 
     setCurrentStep(1);
@@ -1356,6 +1376,10 @@ export default function App() {
             sounds.playClick();
             setIsCertificateOpen(true);
           }}
+          onOpenResults={() => {
+            sounds.playClick();
+            setIsResultsOpen(true);
+          }}
           onReset={handleResetSimulation}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
@@ -1379,12 +1403,8 @@ export default function App() {
       {hasEntered && !isLobbyOpen && (
         <div className="absolute bottom-6 left-6 z-30 pointer-events-auto sm:hidden">
           <VirtualJoystick
-            onMove={(vec) => {
-              joystickVector.current = vec;
-            }}
-            onStop={() => {
-              joystickVector.current = { x: 0, y: 0 };
-            }}
+            onMove={handleJoystickMove}
+            onStop={handleJoystickStop}
           />
         </div>
       )}
@@ -1450,6 +1470,14 @@ export default function App() {
           pollTitle={currentPoll.title}
           timestamp={voteTimestamp || '2026년 11월 7일 14:30'}
           onClose={() => setIsCertificateOpen(false)}
+          onOpenResults={() => {
+            setIsCertificateOpen(false);
+            setIsResultsOpen(true);
+          }}
+          onOpenLobby={() => {
+            setIsCertificateOpen(false);
+            setIsLobbyOpen(true);
+          }}
           onRestart={handleResetSimulation}
         />
       )}
