@@ -45,7 +45,7 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-6 bg-slate-950/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-slate-950/85 backdrop-blur-md">
       <div
         className={`relative w-full max-w-xl max-h-[90dvh] flex flex-col transition-all duration-700 ease-in-out ${
           isFolding
@@ -57,7 +57,7 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
         <div className="shrink-0 flex items-center justify-between px-3 sm:px-4 py-2 sm:py-2.5 bg-emerald-950/80 border border-emerald-500/30 rounded-t-2xl text-emerald-300 text-[11px] sm:text-xs font-semibold backdrop-blur-sm">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-            <span className="whitespace-normal break-keep leading-snug">기표소 내부 · 비밀투표 절대 보장</span>
+            <span className="whitespace-normal break-keep leading-tight">기표소 내부 · 비밀투표 절대 보장</span>
           </div>
           <button
             onClick={onClose}
@@ -68,12 +68,12 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
         </div>
 
         {/* Realistic Korean Election Ballot Paper */}
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[#fcfbf7] border-2 border-[#d6cfbe] shadow-2xl px-2.5 py-3 sm:p-6 text-slate-900 rounded-b-2xl relative select-none">
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[#fcfbf7] border-2 border-[#d6cfbe] shadow-2xl px-2 py-3 sm:p-6 text-slate-900 rounded-b-2xl relative select-none">
           {/* Subtle paper grain texture pattern */}
           <div className="absolute inset-0 bg-[radial-gradient(#e2d9c8_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none rounded-b-2xl" />
 
           {/* Ballot Top Header */}
-          <div className="relative shrink-0 text-center border-b-2 border-slate-900 pb-2.5 sm:pb-3 mb-2.5 sm:mb-3">
+          <div className="relative shrink-0 text-center border-b-2 border-slate-900 pb-2 sm:pb-3 mb-2 sm:mb-3">
             <div className="flex justify-between items-center text-[10px] sm:text-[11px] text-slate-500 mb-1">
               <span>서울특별시 가상 제1투표구</span>
               <span className="font-mono font-semibold">관리번호: 2026-VOTE-01</span>
@@ -81,28 +81,31 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
             <h1 className="text-lg sm:text-2xl font-black tracking-widest text-slate-900 font-serif">
               투  표  용  지
             </h1>
-            <p className="text-xs font-semibold text-slate-700 mt-0.5 whitespace-normal break-keep break-words leading-snug">
+            <p className="text-xs font-semibold text-slate-700 mt-0.5 whitespace-normal break-keep break-words leading-tight">
               [ {pollTitle || '제1회 모의선거'} ]
             </p>
           </div>
 
           {/* Voting Instruction Note */}
-          <div className="relative shrink-0 flex items-start sm:items-center gap-2 p-2 sm:p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[11px] sm:text-xs mb-2.5 sm:mb-3 leading-snug">
+          <div className="relative shrink-0 flex items-start sm:items-center gap-2 p-2 sm:p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[11px] sm:text-xs mb-2.5 sm:mb-3 leading-tight">
             <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
             <span className="whitespace-normal break-keep break-words">
               원하는 후보의 <strong>[기표란]</strong>을 클릭하여 기표용구(<strong>卜</strong>)를 날인한 후, 하단의 <strong>[투표용지 접기]</strong>를 누르세요.
             </span>
           </div>
 
-          {/* Candidates Table (3-Column Mobile-Optimized Korean Ballot Layout) */}
+          {/* Candidates Table (4-Column Korean Ballot Grid Optimized for Smartphone) */}
           <div className="relative flex flex-col flex-1 min-h-0 border-2 border-slate-900 bg-white shadow-sm mb-2.5 sm:mb-4 rounded-xs overflow-hidden">
             {/* Table Header (Fixed Top inside Table) */}
             <div className="shrink-0 flex items-stretch bg-slate-100 text-[11px] sm:text-xs font-bold text-slate-700 text-center border-b-2 border-slate-900">
-              <div className="w-11 sm:w-16 shrink-0 py-2 border-r-2 border-slate-900 flex items-center justify-center">
+              <div className="w-9 sm:w-14 shrink-0 py-2 border-r-2 border-slate-900 flex items-center justify-center">
                 기호
               </div>
-              <div className="flex-1 min-w-0 px-2.5 sm:px-4 py-2 border-r-2 border-slate-900 flex items-center justify-center">
-                후보자 (메뉴 · 정보)
+              <div className="w-[72px] sm:w-28 shrink-0 px-1 sm:px-2 py-2 border-r-2 border-slate-900 flex items-center justify-center">
+                정당명
+              </div>
+              <div className="flex-1 min-w-0 px-2 sm:px-3 py-2 border-r-2 border-slate-900 flex items-center justify-center">
+                후보자(메뉴명)
               </div>
               <div className="w-14 sm:w-20 shrink-0 py-2 flex items-center justify-center">
                 기표란
@@ -114,12 +117,10 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
               {candidates.map((candidate) => {
                 const isSelected = selectedCandidateId === candidate.id;
                 const coords = stampCoordinates[candidate.id];
-                const subText = [
-                  candidate.party?.trim(),
-                  (candidate.subtitle || candidate.description)?.trim(),
-                ]
-                  .filter(Boolean)
-                  .join(' · ');
+                const displayParty =
+                  candidate.party?.trim() || `기호 ${candidate.symbolNumber}번`;
+                const rawDesc = (candidate.subtitle || candidate.description)?.trim() || '';
+                const displayDesc = rawDesc === displayParty ? '' : rawDesc;
 
                 return (
                   <div
@@ -128,30 +129,37 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
                       isSelected ? 'bg-red-50/40' : 'hover:bg-slate-50/70'
                     }`}
                   >
-                    {/* Left: Symbol Number + Subtle Color Accent */}
-                    <div className="w-11 sm:w-16 shrink-0 -my-2.5 py-2.5 flex flex-col items-center justify-center gap-1 border-r-2 border-slate-900 bg-slate-50 font-serif">
+                    {/* 1. Symbol Number */}
+                    <div className="w-9 sm:w-14 shrink-0 -my-2.5 py-2.5 flex flex-col items-center justify-center gap-1 border-r-2 border-slate-900 bg-slate-50 font-serif">
                       <span className="font-black text-lg sm:text-2xl text-slate-900 leading-none">
                         {candidate.symbolNumber}
                       </span>
                       <span
-                        className="w-5 sm:w-6 h-1.5 rounded-full"
+                        className="w-4 sm:w-6 h-1 rounded-full"
                         style={{ backgroundColor: candidate.accentBg || '#475569' }}
                       />
                     </div>
 
-                    {/* Middle: Wide Unified Candidate / Menu Info Cell */}
-                    <div className="flex-1 min-w-0 -my-2.5 py-2.5 px-2.5 sm:px-4 flex flex-col justify-center border-r-2 border-slate-900 text-left">
-                      {subText && (
-                        <span className="text-[11px] sm:text-xs text-slate-500 whitespace-normal break-keep break-words leading-snug mb-0.5">
-                          {subText}
-                        </span>
-                      )}
-                      <span className="text-sm sm:text-base font-bold text-slate-900 whitespace-normal break-keep break-words leading-snug">
-                        {candidate.title}
+                    {/* 2. Party Name Column */}
+                    <div className="w-[72px] sm:w-28 shrink-0 -my-2.5 py-2.5 px-1 sm:px-2 flex items-center justify-center border-r-2 border-slate-900 text-center">
+                      <span className="text-[11px] sm:text-xs font-bold text-slate-800 whitespace-normal break-keep break-words leading-tight">
+                        {displayParty}
                       </span>
                     </div>
 
-                    {/* Right: Stamp Target Cell */}
+                    {/* 3. Candidate Name & Description Column */}
+                    <div className="flex-1 min-w-0 -my-2.5 py-2.5 px-2 sm:px-3 flex flex-col justify-center border-r-2 border-slate-900 text-left">
+                      <span className="text-[13px] sm:text-base font-bold text-slate-950 whitespace-normal break-keep break-words leading-tight">
+                        {candidate.title}
+                      </span>
+                      {displayDesc && (
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-1 whitespace-normal break-keep break-words leading-tight">
+                          {displayDesc}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 4. Stamp Target Cell */}
                     <div
                       onClick={(e) => handleSelectCandidate(candidate.id, e)}
                       className="w-14 sm:w-20 shrink-0 -my-2.5 py-2.5 relative flex items-center justify-center cursor-pointer p-1 group"

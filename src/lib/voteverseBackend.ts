@@ -28,6 +28,9 @@ import {
   savePoll,
   getClosedPollOverrides,
   setClosedPollOverride,
+  formatDbOptionSubtitle,
+  parseOptionPartyAndSubtitle,
+  mergeOfficialPresetCandidates,
 } from '../data/presetPolls';
 
 const STORAGE_KEY_VOTED_PREFIX = 'vps_user_voted_';
@@ -151,58 +154,199 @@ export async function initVoteverseSession(): Promise<string | null> {
 let presetSeedPromise: Promise<void> | null = null;
 
 /**
+ * Upserts poll_options safely whether or not DB table has optional columns like 'party'.
+ */
+async function upsertPollOptionsSafe(
+  rowsWithParty: Array<Record<string, any>>,
+  options?: { ignoreDuplicates?: boolean }
+): Promise<{ error: any }> {
+  if (!isSupabaseConfigured || !supabase || rowsWithParty.length === 0) {
+    return { error: null };
+  }
+
+  const upsertCfg = options?.ignoreDuplicates
+    ? { onConflict: 'id', ignoreDuplicates: true }
+    : { onConflict: 'id' };
+
+  const firstRes = await supabase.from('poll_options').upsert(rowsWithParty, upsertCfg);
+  if (
+    firstRes.error &&
+    ((firstRes.error.message || '').includes('party') ||
+      firstRes.error.code === '42703' ||
+      firstRes.error.code === 'PGRST204')
+  ) {
+    const rowsWithoutParty = rowsWithParty.map(({ party: _p, ...rest }) => rest);
+    return await supabase.from('poll_options').upsert(rowsWithoutParty, upsertCfg);
+  }
+
+  return { error: firstRes.error };
+}
+
+/**
+ * Repairs & seeds poll_options for official preset polls:
+ * - Detects corrupted/wrong rows (e.g., lunch candidates inside poll-monday11 or poll-dinner, or legacy IDs)
+ * - Deletes invalid/mismatched rows cleanly (handling FK constraints on votes if needed)
+ * - Upserts canonical PRESET_POLLS candidates with unique IDs while preserving valid existing vote_counts
+ */
+async function repairOfficialPresetOptions(targetPollIds: string[]): Promise<void> {
+  if (!isSupabaseConfigured || !supabase || targetPollIds.length === 0) return;
+
+  const targetPresets = PRESET_POLLS.filter((p) => targetPollIds.includes(p.id));
+  if (targetPresets.length === 0) return;
+
+  const { data: existingOpts, error: fetchErr } = await supabase
+    .from('poll_options')
+    .select('*')
+    .in('poll_id', targetPresets.map((p) => p.id));
+
+  if (fetchErr) {
+    console.warn('[repairOfficialPresetOptions fetch warning]', fetchErr.message);
+  }
+
+  const rowsByPoll = new Map<string, any[]>();
+  (existingOpts || []).forEach((row: any) => {
+    const pid = String(row.poll_id);
+    if (!rowsByPoll.has(pid)) rowsByPoll.set(pid, []);
+    rowsByPoll.get(pid)!.push(row);
+  });
+
+  for (const preset of targetPresets) {
+    const dbRows = rowsByPoll.get(preset.id) || [];
+    const expectedById = new Map(preset.candidates.map((c) => [c.id, c]));
+    const expectedByTitle = new Map(preset.candidates.map((c) => [c.title.trim(), c]));
+
+    const validCanonicalIds = new Set<string>();
+    const preservedVotesByCanonicalId = new Map<string, number>();
+    const badRowIds: string[] = [];
+
+    for (const row of dbRows) {
+      const rowId = String(row.id);
+      const rowTitle = typeof row.title === 'string' ? row.title.trim() : '';
+      const rowSym = Number(row.symbol_number ?? row.sort_order ?? 0);
+      const rowVotes = Number(row.vote_count ?? row.votes) || 0;
+
+      const canonicalMatch = expectedById.get(rowId);
+      if (
+        canonicalMatch &&
+        rowTitle === canonicalMatch.title.trim() &&
+        rowSym === canonicalMatch.symbolNumber
+      ) {
+        validCanonicalIds.add(rowId);
+        preservedVotesByCanonicalId.set(rowId, rowVotes);
+      } else {
+        // Mismatched / corrupted / legacy row
+        badRowIds.push(rowId);
+        // Only preserve vote_count if title legitimately belongs to THIS preset poll
+        const samePollCand = expectedByTitle.get(rowTitle);
+        if (samePollCand && !preservedVotesByCanonicalId.has(samePollCand.id)) {
+          preservedVotesByCanonicalId.set(samePollCand.id, rowVotes);
+        }
+      }
+    }
+
+    if (badRowIds.length > 0) {
+      const { error: delOptErr } = await supabase
+        .from('poll_options')
+        .delete()
+        .eq('poll_id', preset.id)
+        .in('id', badRowIds);
+
+      if (delOptErr) {
+        // Retry after removing FK-dependent votes on corrupted option rows
+        await supabase
+          .from('votes')
+          .delete()
+          .eq('poll_id', preset.id)
+          .in('option_id', badRowIds);
+        await supabase
+          .from('poll_options')
+          .delete()
+          .eq('poll_id', preset.id)
+          .in('id', badRowIds);
+      }
+    }
+
+    const rowsToInsert = preset.candidates
+      .filter((c) => !validCanonicalIds.has(c.id))
+      .map((c, idx) => ({
+        id: c.id,
+        poll_id: preset.id,
+        symbol_number: c.symbolNumber || idx + 1,
+        sort_order: c.symbolNumber || idx + 1,
+        party: c.party,
+        title: c.title,
+        subtitle: formatDbOptionSubtitle(c.party, c.subtitle, c.symbolNumber || idx + 1),
+        badge_color: c.badgeColor,
+        accent_bg: c.accentBg,
+        vote_count: preservedVotesByCanonicalId.get(c.id) || 0,
+      }));
+
+    if (rowsToInsert.length > 0) {
+      await upsertPollOptionsSafe(rowsToInsert);
+    }
+  }
+}
+
+/**
  * Ensures a specific poll and all its options exist in Supabase DB without overwriting existing vote_count
  */
 export async function ensurePollAndOptionsExist(poll: PollStation): Promise<void> {
   if (!isSupabaseConfigured || !supabase || !poll?.id) return;
 
   try {
+    const presetSource = PRESET_POLLS.find((p) => p.id === poll.id);
+    const targetPoll = presetSource || poll;
+
     // 1. Ensure poll row exists (ignoreDuplicates prevents overwriting existing row)
     await supabase
       .from('polls')
       .upsert(
         [
           {
-            id: poll.id,
-            title: poll.title,
-            description: poll.description || '',
-            category: poll.category || 'public',
-            max_voters: poll.maxVoters || 100,
-            duration_hours: Math.max(1, Math.round(poll.durationHours || 720)),
-            expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
+            id: targetPoll.id,
+            title: targetPoll.title,
+            description: targetPoll.description || '',
+            category: targetPoll.category || 'public',
+            max_voters: targetPoll.maxVoters || 100,
+            duration_hours: Math.max(1, Math.round(targetPoll.durationHours || 720)),
+            expires_at: targetPoll.expiresAt ? new Date(targetPoll.expiresAt).toISOString() : null,
             created_at: new Date().toISOString(),
           },
         ],
         { onConflict: 'id', ignoreDuplicates: true }
       );
 
-    // 2. Check existing options in DB so we NEVER reset existing vote_count to 0
+    // 2. Official preset polls always validate & repair against PRESET_POLLS source of truth
+    if (presetSource) {
+      await repairOfficialPresetOptions([presetSource.id]);
+      return;
+    }
+
+    // 3. Custom poll: check existing options so we NEVER reset existing vote_count to 0
     const { data: existingOpts } = await supabase
       .from('poll_options')
       .select('id')
-      .eq('poll_id', poll.id);
+      .eq('poll_id', targetPoll.id);
 
     const existingIds = new Set((existingOpts || []).map((o: any) => String(o.id)));
-    const missingOptions = (poll.candidates || [])
+    const missingOptions = (targetPoll.candidates || [])
       .map((c, idx) => ({ c, idx }))
       .filter(({ c }) => !existingIds.has(c.id))
       .map(({ c, idx }) => ({
         id: c.id,
-        poll_id: poll.id,
-        symbol_number: idx + 1,
-        sort_order: idx + 1,
+        poll_id: targetPoll.id,
+        symbol_number: c.symbolNumber || idx + 1,
+        sort_order: c.symbolNumber || idx + 1,
         party: c.party || `기호 ${idx + 1}번`,
         title: c.title,
-        subtitle: c.subtitle || '',
+        subtitle: formatDbOptionSubtitle(c.party, c.subtitle || c.description, idx + 1),
         badge_color: c.badgeColor || 'blue',
         accent_bg: c.accentBg || '#3b82f6',
         vote_count: 0,
       }));
 
     if (missingOptions.length > 0) {
-      await supabase
-        .from('poll_options')
-        .upsert(missingOptions, { onConflict: 'id', ignoreDuplicates: true });
+      await upsertPollOptionsSafe(missingOptions, { ignoreDuplicates: true });
     }
   } catch (err) {
     console.warn('[ensurePollAndOptionsExist warning]', err);
@@ -210,7 +354,8 @@ export async function ensurePollAndOptionsExist(poll: PollStation): Promise<void
 }
 
 /**
- * Ensures all 3 official PRESET_POLLS and their options exist in Supabase DB, preserving existing vote_count
+ * Ensures all 3 official PRESET_POLLS and their canonical options exist in Supabase DB,
+ * deleting any contaminated/wrong option rows while preserving valid vote_counts
  */
 export async function ensurePresetPollsSeeded(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
@@ -246,38 +391,8 @@ export async function ensurePresetPollsSeeded(): Promise<void> {
           .upsert(missingPolls, { onConflict: 'id', ignoreDuplicates: true });
       }
 
-      // 2. Check existing poll_options for all preset polls so we NEVER overwrite vote_count
-      const { data: existingOpts } = await supabase
-        .from('poll_options')
-        .select('id')
-        .in('poll_id', presetIds);
-      const existingOptIds = new Set((existingOpts || []).map((o: any) => String(o.id)));
-
-      const missingOptions: any[] = [];
-      PRESET_POLLS.forEach((p) => {
-        p.candidates.forEach((c, idx) => {
-          if (!existingOptIds.has(c.id)) {
-            missingOptions.push({
-              id: c.id,
-              poll_id: p.id,
-              symbol_number: idx + 1,
-              sort_order: idx + 1,
-              party: c.party,
-              title: c.title,
-              subtitle: c.subtitle,
-              badge_color: c.badgeColor,
-              accent_bg: c.accentBg,
-              vote_count: 0,
-            });
-          }
-        });
-      });
-
-      if (missingOptions.length > 0) {
-        await supabase
-          .from('poll_options')
-          .upsert(missingOptions, { onConflict: 'id', ignoreDuplicates: true });
-      }
+      // 2. Verify, repair any contaminated rows, and seed missing canonical options for all 3 official polls
+      await repairOfficialPresetOptions(presetIds);
     } catch (err) {
       console.warn('[ensurePresetPollsSeeded warning]', err);
     } finally {
@@ -290,7 +405,7 @@ export async function ensurePresetPollsSeeded(): Promise<void> {
 
 /**
  * 2. Fetch public polls list from Supabase (category <> 'private')
- * Seeds official preset polls first, reads live poll_options counts, and falls back gracefully
+ * Repairs/seeds official preset polls first, reads live poll_options counts, and keeps PRESET_POLLS as source of truth
  */
 export async function fetchVoteversePolls(): Promise<PollStation[]> {
   const localPolls = getAllPolls();
@@ -300,7 +415,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
   }
 
   try {
-    // Ensure all 3 official preset polls & options exist in DB without overwriting vote_count
+    // Ensure all 3 official preset polls & canonical options exist & repair any corrupted DB rows
     await ensurePresetPollsSeeded();
 
     // Fetch public/official polls; include owner_id if column exists in DB, otherwise fallback cleanly
@@ -340,45 +455,71 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       .select('*')
       .order('symbol_number', { ascending: true });
 
+    const rawOptionsMap: Record<string, any[]> = {};
     const optionsMap: Record<string, Candidate[]> = {};
     if (optionsData) {
       optionsData.forEach((opt: any) => {
-        const pollId = opt.poll_id || opt.pollId;
+        const pollId = String(opt.poll_id || opt.pollId || '');
+        if (!pollId) return;
+
+        if (!rawOptionsMap[pollId]) {
+          rawOptionsMap[pollId] = [];
+        }
+        rawOptionsMap[pollId].push(opt);
+
         if (!optionsMap[pollId]) {
           optionsMap[pollId] = [];
         }
+        const symbolNumber =
+          Number(opt.symbol_number ?? opt.sort_order ?? opt.symbolNumber) || 1;
+        const { party, subtitle } = parseOptionPartyAndSubtitle(
+          opt.party,
+          opt.subtitle,
+          symbolNumber
+        );
+
         optionsMap[pollId].push({
           id: String(opt.id),
-          symbolNumber:
-            Number(opt.symbol_number ?? opt.sort_order ?? opt.symbolNumber) || 1,
-          party: opt.party || '',
+          symbolNumber,
+          party,
           title: opt.title || '후보',
-          subtitle: opt.subtitle || '',
+          subtitle,
           badgeColor: opt.badge_color || opt.badgeColor || 'blue',
           accentBg: opt.accent_bg || opt.accentBg || '#3b82f6',
-          description: opt.description || '',
+          description: opt.description || subtitle || '',
           votes: Number(opt.vote_count !== undefined ? opt.vote_count : opt.votes) || 0,
         });
       });
     }
 
-    const officialPresetIds = new Set(PRESET_POLLS.filter((p) => p.isOfficial).map((p) => p.id));
+    const presetById = new Map(PRESET_POLLS.map((p) => [p.id, p]));
     const closedOverrides = getClosedPollOverrides();
     const localPollsById = new Map(localPolls.map((p) => [p.id, p]));
 
     const remotePolls: PollStation[] = pollsData.map((row: any) => {
-      const candidates = (optionsMap[row.id] || []).sort(
-        (a, b) => a.symbolNumber - b.symbolNumber
-      );
       const pollIdStr = String(row.id);
-      const isOfficial = officialPresetIds.has(pollIdStr) || row.category === 'official';
+      const presetMatch = presetById.get(pollIdStr);
+      const localMatch = localPollsById.get(pollIdStr);
       const dbExpiresAt = row.expires_at ? new Date(row.expires_at).getTime() : undefined;
       const overrideClosedAt = closedOverrides[pollIdStr];
       const effectiveExpiresAt =
         overrideClosedAt && (!dbExpiresAt || dbExpiresAt > overrideClosedAt)
           ? overrideClosedAt
           : dbExpiresAt;
-      const localMatch = localPollsById.get(pollIdStr);
+
+      // For official preset polls, ALWAYS use PRESET_POLLS as source of truth and merge only valid DB vote_counts
+      if (presetMatch) {
+        return {
+          ...presetMatch,
+          expiresAt: effectiveExpiresAt || presetMatch.expiresAt,
+          candidates: mergeOfficialPresetCandidates(presetMatch, rawOptionsMap[pollIdStr] || []),
+        };
+      }
+
+      const candidates = (optionsMap[pollIdStr] || []).sort(
+        (a, b) => a.symbolNumber - b.symbolNumber
+      );
+      const isOfficial = row.category === 'official';
 
       return {
         id: pollIdStr,
@@ -394,7 +535,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
         ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
         adminPin: localMatch?.adminPin,
         accessCode: localMatch?.accessCode,
-        candidates: candidates.length > 0 ? candidates : PRESET_POLLS[0].candidates,
+        candidates: candidates.length > 0 ? candidates : localMatch?.candidates || [],
       };
     });
 
@@ -403,12 +544,11 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     const merged = [...remotePolls];
     PRESET_POLLS.forEach((preset) => {
       if (!remoteIds.has(preset.id)) {
-        const dbCands = optionsMap[preset.id];
         const overrideClosedAt = closedOverrides[preset.id];
         merged.push({
           ...preset,
           expiresAt: overrideClosedAt || preset.expiresAt,
-          candidates: dbCands && dbCands.length > 0 ? dbCands : preset.candidates,
+          candidates: mergeOfficialPresetCandidates(preset, rawOptionsMap[preset.id] || []),
         });
       }
     });
@@ -433,6 +573,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
 
 /**
  * Fetch authoritative candidate vote counts from Supabase poll_options table
+ * For official preset polls, always keeps PRESET_POLLS candidate metadata as source of truth
  */
 export async function fetchPollTalliesFromDB(
   pollId: string,
@@ -445,11 +586,16 @@ export async function fetchPollTalliesFromDB(
   try {
     const { data, error } = await supabase
       .from('poll_options')
-      .select('id, vote_count')
+      .select('id, symbol_number, sort_order, title, vote_count')
       .eq('poll_id', pollId);
 
     if (error || !data) {
       return null;
+    }
+
+    const presetMatch = PRESET_POLLS.find((p) => p.id === pollId);
+    if (presetMatch) {
+      return mergeOfficialPresetCandidates(presetMatch, data);
     }
 
     const countsMap = new Map<string, number>();
@@ -483,6 +629,19 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
     ownerId: resolvedOwnerId,
   };
 
+  const optionRowsWithParty = pollWithOwner.candidates.map((c, idx) => ({
+    id: c.id,
+    poll_id: pollWithOwner.id,
+    symbol_number: c.symbolNumber || idx + 1,
+    sort_order: c.symbolNumber || idx + 1,
+    party: c.party || `기호 ${idx + 1}번`,
+    title: c.title,
+    subtitle: formatDbOptionSubtitle(c.party, c.subtitle || c.description, c.symbolNumber || idx + 1),
+    badge_color: c.badgeColor,
+    accent_bg: c.accentBg,
+    vote_count: c.votes || 0,
+  }));
+
   const p_poll_payload: Record<string, any> = {
     id: pollWithOwner.id,
     title: pollWithOwner.title,
@@ -492,17 +651,7 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
     duration_hours: Math.max(1, Math.round(pollWithOwner.durationHours || 24)),
     expires_at: pollWithOwner.expiresAt ? new Date(pollWithOwner.expiresAt).toISOString() : null,
     owner_id: resolvedOwnerId,
-    candidates: pollWithOwner.candidates.map((c) => ({
-      id: c.id,
-      symbol_number: c.symbolNumber,
-      sort_order: c.symbolNumber,
-      party: c.party,
-      title: c.title,
-      subtitle: c.subtitle,
-      badge_color: c.badgeColor,
-      accent_bg: c.accentBg,
-      vote_count: c.votes || 0,
-    })),
+    candidates: optionRowsWithParty.map(({ poll_id: _pid, ...rest }) => rest),
   };
 
   if (pollWithOwner.accessCode) {
@@ -561,20 +710,7 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
         return { success: false, error: `투표소 DB 저장 실패: ${pollError.message}` };
       }
 
-      const optionRows = pollWithOwner.candidates.map((c) => ({
-        id: c.id,
-        poll_id: pollWithOwner.id,
-        symbol_number: c.symbolNumber,
-        sort_order: c.symbolNumber,
-        party: c.party,
-        title: c.title,
-        subtitle: c.subtitle,
-        badge_color: c.badgeColor,
-        accent_bg: c.accentBg,
-        vote_count: c.votes || 0,
-      }));
-
-      const { error: optError } = await supabase.from('poll_options').upsert(optionRows);
+      const { error: optError } = await upsertPollOptionsSafe(optionRowsWithParty);
       if (optError) {
         return { success: false, error: `후보자 DB 저장 실패: ${optError.message}` };
       }
@@ -933,10 +1069,11 @@ export async function castVote(
 
   try {
     // a) Ensure current poll & candidates exist in public.polls and public.poll_options
+    //    For official preset polls, always use PRESET_POLLS as authoritative source
     const resolvedPoll =
+      PRESET_POLLS.find((p) => p.id === pollId) ||
       pollData ||
-      getAllPolls().find((p) => p.id === pollId) ||
-      PRESET_POLLS.find((p) => p.id === pollId);
+      getAllPolls().find((p) => p.id === pollId);
     if (resolvedPoll) {
       await ensurePollAndOptionsExist(resolvedPoll);
     } else {

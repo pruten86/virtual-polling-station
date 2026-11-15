@@ -8,6 +8,7 @@ import { sounds } from './sound';
 import { createProceduralAvatar, createNameTagSprite, CharacterController } from './scene/avatar';
 import { buildPollingStationEnvironment, EnvironmentResult } from './scene/environment';
 import {
+  PRESET_POLLS,
   getAllPolls,
   getPollTallies,
   generateRandomNickname,
@@ -425,12 +426,18 @@ export default function App() {
   const syncTalliesFromDB = useCallback(async (poll: PollStation, base: Candidate[]) => {
     const dbCandidates = await fetchPollTalliesFromDB(poll.id, base);
     if (dbCandidates) {
+      setAllPolls((prev) =>
+        prev.map((p) => (p.id === poll.id ? { ...p, candidates: dbCandidates } : p))
+      );
+
+      // Guard against stale async responses if user already switched to another poll
+      if (currentPollRef.current.id !== poll.id) {
+        return;
+      }
+
       setCandidates(dbCandidates);
       setCurrentPoll((prev) =>
         prev.id === poll.id ? { ...prev, candidates: dbCandidates } : prev
-      );
-      setAllPolls((prev) =>
-        prev.map((p) => (p.id === poll.id ? { ...p, candidates: dbCandidates } : p))
       );
 
       const dbTotal = dbCandidates.reduce((s, c) => s + c.votes, 0);
@@ -465,16 +472,31 @@ export default function App() {
     if (!hasEntered && !isResultsOpen) return;
 
     const activePoll = currentPollRef.current;
-    syncTalliesFromDB(activePoll, activePoll.candidates);
+    const presetSource = PRESET_POLLS.find((p) => p.id === activePoll.id);
+    const authoritativeCandidates = presetSource
+      ? presetSource.candidates.map((pc) => {
+          const match = activePoll.candidates.find(
+            (c) =>
+              c.id === pc.id ||
+              (c.symbolNumber === pc.symbolNumber && c.title === pc.title)
+          );
+          return match ? { ...pc, votes: match.votes } : pc;
+        })
+      : activePoll.candidates;
+
+    setCandidates(authoritativeCandidates);
+    syncTalliesFromDB(activePoll, authoritativeCandidates);
 
     const unsubscribe = subscribePollRealtime(activePoll.id, ({ optionId, votes }) => {
-      setCandidates((prev) => {
-        const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
-        if (currentPollRef.current.isOfficial) {
-          setOfficialChannelState(buildOfficialChannelState(next));
-        }
-        return next;
-      });
+      if (currentPollRef.current.id === activePoll.id) {
+        setCandidates((prev) => {
+          const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
+          if (currentPollRef.current.isOfficial) {
+            setOfficialChannelState(buildOfficialChannelState(next));
+          }
+          return next;
+        });
+      }
       setAllPolls((prevPolls) =>
         prevPolls.map((p) =>
           p.id !== activePoll.id
@@ -1461,13 +1483,31 @@ export default function App() {
       });
     }
 
-    const isNewPoll = selectedPoll.id !== currentPoll.id;
-    setCurrentPoll(selectedPoll);
+    // For official preset polls, always anchor metadata & candidates to PRESET_POLLS source of truth
+    const presetMatch = PRESET_POLLS.find((p) => p.id === selectedPoll.id);
+    const normalizedPoll: PollStation = presetMatch
+      ? {
+          ...presetMatch,
+          expiresAt: selectedPoll.expiresAt || presetMatch.expiresAt,
+          candidates: presetMatch.candidates.map((pc) => {
+            const match = (selectedPoll.candidates || []).find(
+              (c) =>
+                c.id === pc.id ||
+                (c.symbolNumber === pc.symbolNumber && c.title === pc.title)
+            );
+            return match ? { ...pc, votes: match.votes } : pc;
+          }),
+        }
+      : selectedPoll;
 
-    // Initialize candidate state from selected poll, ensure DB rows exist, and sync immediately with Supabase DB
-    setCandidates(selectedPoll.candidates);
-    if (selectedPoll.isOfficial) {
-      setOfficialChannelState(buildOfficialChannelState(selectedPoll.candidates));
+    const isNewPoll = normalizedPoll.id !== currentPollRef.current.id;
+    currentPollRef.current = normalizedPoll;
+    setCurrentPoll(normalizedPoll);
+
+    // Immediately replace candidates state with normalizedPoll.candidates (never retain previous poll's candidates)
+    setCandidates(normalizedPoll.candidates);
+    if (normalizedPoll.isOfficial) {
+      setOfficialChannelState(buildOfficialChannelState(normalizedPoll.candidates));
     } else {
       setOfficialChannelState({
         activeChannelIndex: 1,
@@ -1476,14 +1516,16 @@ export default function App() {
         allChannels: [],
       });
     }
-    ensurePollAndOptionsExist(selectedPoll).then(() => {
-      syncTalliesFromDB(selectedPoll, selectedPoll.candidates);
+
+    // Pass normalizedPoll & its own candidates (never React `candidates` state)
+    ensurePollAndOptionsExist(normalizedPoll).then(() => {
+      syncTalliesFromDB(normalizedPoll, normalizedPoll.candidates);
     });
 
     // Update URL parameter
     try {
       const url = new URL(window.location.origin + window.location.pathname);
-      url.searchParams.set('poll', selectedPoll.id);
+      url.searchParams.set('poll', normalizedPoll.id);
       window.history.replaceState({}, '', url.toString());
     } catch {
       // ignore

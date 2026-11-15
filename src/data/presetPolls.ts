@@ -194,7 +194,7 @@ export const PRESET_POLLS: PollStation[] = [
     expiresAt: Date.now() + THIRTY_DAYS_MS,
     candidates: [
       {
-        id: 'lunch-1',
+        id: 'poll-lunch-1',
         symbolNumber: 1,
         party: '얼큰한국물당',
         title: '따끈한 김치찌개 정식',
@@ -205,7 +205,7 @@ export const PRESET_POLLS: PollStation[] = [
         votes: 0,
       },
       {
-        id: 'lunch-2',
+        id: 'poll-lunch-2',
         symbolNumber: 2,
         party: '바삭한행복당',
         title: '바삭 수제 등심 돈가스',
@@ -216,7 +216,7 @@ export const PRESET_POLLS: PollStation[] = [
         votes: 0,
       },
       {
-        id: 'lunch-3',
+        id: 'poll-lunch-3',
         symbolNumber: 3,
         party: '건강한선택당',
         title: '아보카도 연어 포케볼',
@@ -239,7 +239,7 @@ export const PRESET_POLLS: PollStation[] = [
     expiresAt: Date.now() + THIRTY_DAYS_MS,
     candidates: [
       {
-        id: 'mon-1',
+        id: 'poll-monday11-1',
         symbolNumber: 1,
         party: '워라밸혁신당',
         title: '적극 찬성 (11시 출근 시행)',
@@ -250,7 +250,7 @@ export const PRESET_POLLS: PollStation[] = [
         votes: 0,
       },
       {
-        id: 'mon-2',
+        id: 'poll-monday11-2',
         symbolNumber: 2,
         party: '안정운영당',
         title: '반대 (현행 9시 유지)',
@@ -261,7 +261,7 @@ export const PRESET_POLLS: PollStation[] = [
         votes: 0,
       },
       {
-        id: 'mon-3',
+        id: 'poll-monday11-3',
         symbolNumber: 3,
         party: '단계적도입당',
         title: '1개월 시범 운영 후 재검토',
@@ -284,7 +284,7 @@ export const PRESET_POLLS: PollStation[] = [
     expiresAt: Date.now() + THIRTY_DAYS_MS,
     candidates: [
       {
-        id: 'din-1',
+        id: 'poll-dinner-1',
         symbolNumber: 1,
         party: '육식동행당',
         title: '지글지글 숙성 삼겹살 & 목살',
@@ -295,7 +295,7 @@ export const PRESET_POLLS: PollStation[] = [
         votes: 0,
       },
       {
-        id: 'din-2',
+        id: 'poll-dinner-2',
         symbolNumber: 2,
         party: '치맥연합당',
         title: '황금 올리브 치킨 & 수제맥주',
@@ -306,7 +306,7 @@ export const PRESET_POLLS: PollStation[] = [
         votes: 0,
       },
       {
-        id: 'din-3',
+        id: 'poll-dinner-3',
         symbolNumber: 3,
         party: '바다의맛당',
         title: '신선 제철 모듬회 & 매운탕',
@@ -319,6 +319,87 @@ export const PRESET_POLLS: PollStation[] = [
     ],
   },
 ];
+
+export function formatDbOptionSubtitle(
+  party?: string | null,
+  subtitle?: string | null,
+  symbolNumber: number = 1
+): string {
+  const p = (party || `기호 ${symbolNumber}번`).trim();
+  const s = (subtitle || '').trim();
+  if (!s || s === p) return p;
+  if (s.startsWith(`${p} | `)) return s;
+  return `${p} | ${s}`;
+}
+
+export function parseOptionPartyAndSubtitle(
+  rawParty: unknown,
+  rawSubtitle: unknown,
+  symbolNumber: number = 1
+): { party: string; subtitle: string } {
+  const sRaw = typeof rawSubtitle === 'string' ? rawSubtitle.trim() : '';
+  const pRaw = typeof rawParty === 'string' ? rawParty.trim() : '';
+
+  if (sRaw.includes(' | ')) {
+    const sepIdx = sRaw.indexOf(' | ');
+    const left = sRaw.slice(0, sepIdx).trim();
+    const right = sRaw.slice(sepIdx + 3).trim();
+    return {
+      party: pRaw || left || `기호 ${symbolNumber}번`,
+      subtitle: right,
+    };
+  }
+
+  if (pRaw) {
+    return {
+      party: pRaw,
+      subtitle: sRaw === pRaw ? '' : sRaw,
+    };
+  }
+
+  return {
+    party: `기호 ${symbolNumber}번`,
+    subtitle: sRaw,
+  };
+}
+
+export function mergeOfficialPresetCandidates(
+  presetPoll: PollStation,
+  dbRows: Array<Record<string, any>>
+): Candidate[] {
+  return presetPoll.candidates.map((c) => {
+    // 1. Exact canonical ID match first (only if title matches or DB row title is missing)
+    const exactIdRow = dbRows.find(
+      (r) =>
+        String(r.id) === c.id &&
+        (!r.title || String(r.title).trim() === c.title.trim())
+    );
+    if (exactIdRow) {
+      return {
+        ...c,
+        votes: Number(exactIdRow.vote_count !== undefined ? exactIdRow.vote_count : exactIdRow.votes) || 0,
+      };
+    }
+
+    // 2. Fallback match by symbol_number + exact candidate title (handles legacy IDs like lunch-1 safely, rejects contaminated rows)
+    const symbolAndTitleRow = dbRows.find((r) => {
+      const sym = Number(r.symbol_number ?? r.sort_order ?? r.symbolNumber);
+      const rowTitle = typeof r.title === 'string' ? r.title.trim() : '';
+      return sym === c.symbolNumber && rowTitle === c.title.trim();
+    });
+
+    return {
+      ...c,
+      votes: symbolAndTitleRow
+        ? Number(
+            symbolAndTitleRow.vote_count !== undefined
+              ? symbolAndTitleRow.vote_count
+              : symbolAndTitleRow.votes
+          ) || 0
+        : 0,
+    };
+  });
+}
 
 const STORAGE_KEY_POLLS = 'vps_all_polling_stations_v3';
 const STORAGE_KEY_TALLIES_PREFIX = 'vps_tally_v3_';
@@ -877,33 +958,62 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
 
     const { data: optionsData } = await supabase.from('poll_options').select('*');
 
+    const rawOptionsMap: Record<string, any[]> = {};
     const optionsMap: Record<string, Candidate[]> = {};
     if (optionsData) {
       optionsData.forEach((opt: any) => {
+        if (!rawOptionsMap[opt.poll_id]) {
+          rawOptionsMap[opt.poll_id] = [];
+        }
+        rawOptionsMap[opt.poll_id].push(opt);
+
         if (!optionsMap[opt.poll_id]) {
           optionsMap[opt.poll_id] = [];
         }
+        const symbolNumber = Number(opt.symbol_number ?? opt.sort_order) || 1;
+        const { party, subtitle } = parseOptionPartyAndSubtitle(
+          opt.party,
+          opt.subtitle,
+          symbolNumber
+        );
         optionsMap[opt.poll_id].push({
           id: opt.id,
-          symbolNumber: Number(opt.symbol_number ?? opt.sort_order) || 1,
-          party: opt.party || '',
+          symbolNumber,
+          party,
           title: opt.title,
-          subtitle: opt.subtitle || '',
+          subtitle,
           badgeColor: opt.badge_color || 'blue',
           accentBg: opt.accent_bg || '#3b82f6',
-          description: opt.description || '',
+          description: opt.description || subtitle || '',
           votes: Number(opt.vote_count) || 0,
         });
       });
     }
 
-    const officialPresetIds = new Set(PRESET_POLLS.filter((p) => p.isOfficial).map((p) => p.id));
+    const presetById = new Map(PRESET_POLLS.map((p) => [p.id, p]));
+    const localById = new Map(localPolls.map((p) => [p.id, p]));
 
     const remotePolls: PollStation[] = pollsData.map((row: any) => {
+      const rowId = String(row.id);
+      const presetMatch = presetById.get(rowId);
+      const localMatch = localById.get(rowId);
+
+      if (presetMatch) {
+        const mergedOfficialCandidates = mergeOfficialPresetCandidates(
+          presetMatch,
+          rawOptionsMap[rowId] || []
+        );
+        return {
+          ...presetMatch,
+          expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : presetMatch.expiresAt,
+          candidates: mergedOfficialCandidates,
+        };
+      }
+
       const candidates = (optionsMap[row.id] || []).sort(
         (a, b) => a.symbolNumber - b.symbolNumber
       );
-      const isOfficial = officialPresetIds.has(String(row.id)) || row.category === 'official';
+      const isOfficial = row.category === 'official';
       return {
         id: row.id,
         title: row.title,
@@ -915,7 +1025,7 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
         isCustom: !isOfficial,
         durationHours: Number(row.duration_hours) || 24,
         expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : undefined,
-        candidates: candidates.length > 0 ? candidates : PRESET_POLLS[0].candidates,
+        candidates: candidates.length > 0 ? candidates : localMatch?.candidates || [],
       };
     });
 
@@ -924,7 +1034,10 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
     const merged = [...remotePolls];
     PRESET_POLLS.forEach((preset) => {
       if (!remoteIds.has(preset.id)) {
-        merged.push(preset);
+        merged.push({
+          ...preset,
+          candidates: mergeOfficialPresetCandidates(preset, rawOptionsMap[preset.id] || []),
+        });
       }
     });
 
@@ -958,21 +1071,30 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
         },
       ]);
 
-      // Upsert options
-      const optionRows = poll.candidates.map((c) => ({
+      // Upsert options preserving party in both party and subtitle
+      const optionRowsWithParty = poll.candidates.map((c, idx) => ({
         id: c.id,
         poll_id: poll.id,
-        symbol_number: c.symbolNumber,
-        sort_order: c.symbolNumber,
-        party: c.party,
+        symbol_number: c.symbolNumber || idx + 1,
+        sort_order: c.symbolNumber || idx + 1,
+        party: c.party || `기호 ${idx + 1}번`,
         title: c.title,
-        subtitle: c.subtitle,
+        subtitle: formatDbOptionSubtitle(c.party, c.subtitle || c.description, idx + 1),
         badge_color: c.badgeColor,
         accent_bg: c.accentBg,
         vote_count: c.votes || 0,
       }));
 
-      await supabase.from('poll_options').upsert(optionRows);
+      const { error: optErr } = await supabase.from('poll_options').upsert(optionRowsWithParty);
+      if (
+        optErr &&
+        ((optErr.message || '').includes('party') ||
+          optErr.code === '42703' ||
+          optErr.code === 'PGRST204')
+      ) {
+        const optionRowsNoParty = optionRowsWithParty.map(({ party: _p, ...rest }) => rest);
+        await supabase.from('poll_options').upsert(optionRowsNoParty);
+      }
     } catch (err) {
       console.warn('[Supabase savePollAsync error, saved to local]', err);
     }
