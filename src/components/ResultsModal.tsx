@@ -332,12 +332,12 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                 <>
                   현재 조회 득표수: <strong className="text-white">{totalVotes}표</strong>
                   <span className="text-sky-300 ml-2 font-semibold">
-                    (전체 누적 {cumulativeTotal}표 / {allChannels.length}개 채널 운영 중)
+                    (전체 누적 {cumulativeTotal}표 · {allChannels.length}개 채널 · {isClosed ? '개표 완료 (100%)' : '실시간 집계 중'})
                   </span>
                 </>
               ) : (
                 <>
-                  전체 투표수: <strong className="text-white">{totalVotes} / {maxVoters}표</strong> (개표율 100%)
+                  전체 투표수: <strong className="text-white">{totalVotes} / {maxVoters}표</strong> ({isClosed ? '개표 완료 (100%)' : '실시간 집계 중'})
                   {totalVotes >= maxVoters && (
                     <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                       정원 마감
@@ -355,7 +355,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-sky-400" />
-                <span>채널별 개표 현황 선택 (100명 단위 투표소)</span>
+                <span>제N투표소 (100명 단위 실시간 분할)</span>
               </span>
               <span className="text-[10px] text-slate-400">
                 현재 활성: <strong className="text-sky-300">제{activeChannelIndex}투표소</strong>

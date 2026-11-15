@@ -5,7 +5,9 @@ import {
   getVoterUUID,
   getMultiplayerSessionId as getSupabaseMultiplayerSessionId,
 } from './supabase';
+import { EmoteId, resolveEmoteId } from '../scene/avatar';
 export { ensureAnonymousAuth };
+export type { EmoteId };
 
 let fallbackSessionId: string | null = null;
 
@@ -418,21 +420,22 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     // Ensure all 3 official preset polls & canonical options exist & repair any corrupted DB rows
     await ensurePresetPollsSeeded();
 
-    // Fetch public/official polls; include owner_id if column exists in DB, otherwise fallback cleanly
+    // Fetch public/official polls; include optional columns (owner_id, access_code) if present in DB
     let pollsData: any[] | null = null;
     let pollsError: any = null;
 
-    const withOwnerRes = await supabase
+    const fullColsRes = await supabase
       .from('polls')
-      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, owner_id')
+      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, owner_id, access_code')
       .neq('category', 'private')
       .order('created_at', { ascending: false });
 
     if (
-      withOwnerRes.error &&
-      ((withOwnerRes.error.message || '').includes('owner_id') ||
-        withOwnerRes.error.code === '42703' ||
-        withOwnerRes.error.code === 'PGRST204')
+      fullColsRes.error &&
+      (fullColsRes.error.code === '42703' ||
+        fullColsRes.error.code === 'PGRST204' ||
+        (fullColsRes.error.message || '').includes('owner_id') ||
+        (fullColsRes.error.message || '').includes('access_code'))
     ) {
       const baseRes = await supabase
         .from('polls')
@@ -442,8 +445,8 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       pollsData = baseRes.data;
       pollsError = baseRes.error;
     } else {
-      pollsData = withOwnerRes.data;
-      pollsError = withOwnerRes.error;
+      pollsData = fullColsRes.data;
+      pollsError = fullColsRes.error;
     }
 
     if (pollsError || !pollsData || pollsData.length === 0) {
@@ -534,7 +537,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
         expiresAt: effectiveExpiresAt,
         ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
         adminPin: localMatch?.adminPin,
-        accessCode: localMatch?.accessCode,
+        accessCode: row.access_code ? String(row.access_code) : localMatch?.accessCode,
         candidates: candidates.length > 0 ? candidates : localMatch?.candidates || [],
       };
     });
@@ -568,6 +571,152 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
   } catch (err) {
     console.warn('[Voteverse fetchPolls error, using local fallback]', err);
     return localPolls;
+  }
+}
+
+function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
+  const pollIdStr = String(row.id);
+  const presetMatch = PRESET_POLLS.find((p) => p.id === pollIdStr);
+  const localMatch = getAllPolls().find((p) => p.id === pollIdStr);
+  const closedOverrides = getClosedPollOverrides();
+  const dbExpiresAt = row.expires_at ? new Date(row.expires_at).getTime() : undefined;
+  const overrideClosedAt = closedOverrides[pollIdStr];
+  const effectiveExpiresAt =
+    overrideClosedAt && (!dbExpiresAt || dbExpiresAt > overrideClosedAt)
+      ? overrideClosedAt
+      : dbExpiresAt;
+
+  if (presetMatch) {
+    return {
+      ...presetMatch,
+      expiresAt: effectiveExpiresAt || presetMatch.expiresAt,
+      candidates: mergeOfficialPresetCandidates(presetMatch, optionRows),
+    };
+  }
+
+  const candidates: Candidate[] = (optionRows || [])
+    .map((opt: any) => {
+      const symbolNumber =
+        Number(opt.symbol_number ?? opt.sort_order ?? opt.symbolNumber) || 1;
+      const { party, subtitle } = parseOptionPartyAndSubtitle(
+        opt.party,
+        opt.subtitle,
+        symbolNumber
+      );
+      return {
+        id: String(opt.id),
+        symbolNumber,
+        party,
+        title: opt.title || '후보',
+        subtitle,
+        badgeColor: opt.badge_color || opt.badgeColor || 'blue',
+        accentBg: opt.accent_bg || opt.accentBg || '#3b82f6',
+        description: opt.description || subtitle || '',
+        votes: Number(opt.vote_count !== undefined ? opt.vote_count : opt.votes) || 0,
+      };
+    })
+    .sort((a, b) => a.symbolNumber - b.symbolNumber);
+
+  const isOfficial = row.category === 'official';
+
+  return {
+    id: pollIdStr,
+    title: row.title,
+    description: row.description || '',
+    category: row.category || 'public',
+    maxVoters: Number(row.max_voters) || 100,
+    createdAt: row.created_at ? row.created_at.split('T')[0] : '2026-11-11',
+    isOfficial,
+    isCustom: !isOfficial,
+    durationHours: Number(row.duration_hours) || 24,
+    expiresAt: effectiveExpiresAt,
+    ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
+    adminPin: row.admin_pin ? String(row.admin_pin) : localMatch?.adminPin,
+    accessCode: row.access_code ? String(row.access_code) : localMatch?.accessCode,
+    candidates: candidates.length > 0 ? candidates : localMatch?.candidates || [],
+  };
+}
+
+/**
+ * Fetches a single poll (public OR private) by ID from Supabase for cross-device ?poll=ID share links
+ */
+export async function fetchPollByIdFromDB(pollId: string): Promise<PollStation | null> {
+  if (!pollId) return null;
+  const presetMatch = PRESET_POLLS.find((p) => p.id === pollId);
+  const localMatch = getAllPolls().find((p) => p.id === pollId);
+
+  if (!isSupabaseConfigured || !supabase) {
+    return presetMatch || localMatch || null;
+  }
+
+  try {
+    const { data: pollRow, error } = await supabase
+      .from('polls')
+      .select('*')
+      .eq('id', pollId)
+      .maybeSingle();
+
+    if (error || !pollRow) {
+      return presetMatch || localMatch || null;
+    }
+
+    const { data: optionRows } = await supabase
+      .from('poll_options')
+      .select('*')
+      .eq('poll_id', pollId)
+      .order('symbol_number', { ascending: true });
+
+    return mapDbPollRowToStation(pollRow, optionRows || []);
+  } catch (err) {
+    console.warn('[fetchPollByIdFromDB error]', err);
+    return presetMatch || localMatch || null;
+  }
+}
+
+/**
+ * Finds a private poll across devices by 4-digit access code (or exact poll ID)
+ */
+export async function findPrivatePollByAccessCode(code: string): Promise<PollStation | null> {
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+
+  const localMatch = getAllPolls().find(
+    (p) => p.category === 'private' && (p.accessCode === trimmed || p.id === trimmed)
+  );
+
+  if (!isSupabaseConfigured || !supabase) {
+    return localMatch || null;
+  }
+
+  try {
+    const { data: byCodeRow, error: codeErr } = await supabase
+      .from('polls')
+      .select('*')
+      .eq('category', 'private')
+      .eq('access_code', trimmed)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!codeErr && byCodeRow) {
+      const { data: optionRows } = await supabase
+        .from('poll_options')
+        .select('*')
+        .eq('poll_id', byCodeRow.id)
+        .order('symbol_number', { ascending: true });
+      return mapDbPollRowToStation(byCodeRow, optionRows || []);
+    }
+
+    // Also allow lookup by poll ID if someone enters an ID
+    const byId = await fetchPollByIdFromDB(trimmed);
+    if (byId && byId.category === 'private') {
+      return byId;
+    }
+
+    return localMatch || null;
+  } catch (err) {
+    console.warn('[findPrivatePollByAccessCode error]', err);
+    return localMatch || null;
   }
 }
 
@@ -696,14 +845,31 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
         created_at: new Date().toISOString(),
       };
 
-      let pollError = (await supabase.from('polls').upsert([{ ...baseRow, owner_id: resolvedOwnerId }])).error;
+      const extendedRow: Record<string, any> = {
+        ...baseRow,
+        owner_id: resolvedOwnerId,
+        ...(pollWithOwner.accessCode ? { access_code: pollWithOwner.accessCode } : {}),
+        ...(pollWithOwner.adminPin ? { admin_pin: pollWithOwner.adminPin } : {}),
+      };
+
+      let pollError = (await supabase.from('polls').upsert([extendedRow])).error;
       if (
         pollError &&
-        ((pollError.message || '').includes('owner_id') ||
-          pollError.code === '42703' ||
-          pollError.code === 'PGRST204')
+        (pollError.code === '42703' ||
+          pollError.code === 'PGRST204' ||
+          (pollError.message || '').includes('owner_id') ||
+          (pollError.message || '').includes('access_code') ||
+          (pollError.message || '').includes('admin_pin'))
       ) {
-        pollError = (await supabase.from('polls').upsert([baseRow])).error;
+        // Retry stripping any optional metadata column that may not exist on older DB schema
+        const withAccessOnly: Record<string, any> = {
+          ...baseRow,
+          ...(pollWithOwner.accessCode ? { access_code: pollWithOwner.accessCode } : {}),
+        };
+        pollError = (await supabase.from('polls').upsert([withAccessOnly])).error;
+        if (pollError) {
+          pollError = (await supabase.from('polls').upsert([baseRow])).error;
+        }
       }
 
       if (pollError) {
@@ -1329,6 +1495,10 @@ export interface RemotePlayer {
   z: number;
   rotY: number;
   isMoving?: boolean;
+  emoteId?: EmoteId;
+  emoteEmoji?: string;
+  emoteText?: string;
+  emoteSeq?: number;
 }
 
 export interface PlayerMovePayload {
@@ -1345,6 +1515,15 @@ export interface VoteCastPayload {
   userId: string;
   nickname: string;
   candidateId: string;
+}
+
+export interface EmotePayload {
+  userId: string;
+  nickname: string;
+  emoteId: EmoteId;
+  emoji: string;
+  text: string;
+  seq: number;
 }
 
 export interface PlayerStateInput {
@@ -1380,6 +1559,7 @@ export interface MultiplayerRoomHandle {
     avatarType?: 'male' | 'female'
   ) => void;
   broadcastVote: (nickname: string, candidateId: string) => void;
+  sendEmote: (emoji: string, text: string, emoteId?: EmoteId) => void;
   leave: () => void;
 }
 
@@ -1405,9 +1585,12 @@ export function joinMultiplayerRoom(
     onPeerLeave?: (userId: string) => void;
     onPresenceCount?: (count: number) => void;
     onVoteCast: (payload: VoteCastPayload) => void;
+    onPeerEmote?: (payload: EmotePayload) => void;
+    onConnectionChange?: (isConnected: boolean) => void;
   }
 ): MultiplayerRoomHandle {
   if (!isSupabaseConfigured || !supabase) {
+    callbacks.onConnectionChange?.(false);
     return {
       channel: null,
       isSubscribed: () => false,
@@ -1415,11 +1598,22 @@ export function joinMultiplayerRoom(
       sendMove: () => {},
       updatePresence: () => {},
       broadcastVote: () => {},
+      sendEmote: () => {},
       leave: () => {},
     };
   }
 
   let subscribed = false;
+  let activeEmoteBroadcast: {
+    emoteId: EmoteId;
+    emoji: string;
+    text: string;
+    seq: number;
+    expiresAt: number;
+  } | null = null;
+  let emoteSeqCounter = 0;
+
+  callbacks.onConnectionChange?.(false);
   const roomChannelName = `voteverse_room_${pollId}`;
   const channel = supabase.channel(roomChannelName, {
     config: {
@@ -1441,6 +1635,13 @@ export function joinMultiplayerRoom(
     if (raw?.x !== undefined && !Number.isFinite(rawX)) return null;
     if (raw?.z !== undefined && !Number.isFinite(rawZ)) return null;
 
+    const hasEmoteSeq = Number.isFinite(Number(raw?.emoteSeq)) && Number(raw?.emoteSeq) > 0;
+    const resolvedEmoteId = raw?.emoteId
+      ? resolveEmoteId(raw.emoteId, raw.emoteText)
+      : hasEmoteSeq
+      ? resolveEmoteId(raw.emoteEmoji, raw.emoteText)
+      : undefined;
+
     return {
       userId,
       nickname: typeof raw?.nickname === 'string' && raw.nickname.trim() ? raw.nickname : '선거인',
@@ -1449,6 +1650,14 @@ export function joinMultiplayerRoom(
       z: Number.isFinite(rawZ) ? rawZ : 0.5,
       rotY: Number.isFinite(rawRotY) ? rawRotY : 0,
       isMoving: Boolean(raw?.isMoving),
+      ...(hasEmoteSeq && resolvedEmoteId
+        ? {
+            emoteId: resolvedEmoteId,
+            emoteEmoji: typeof raw?.emoteEmoji === 'string' ? raw.emoteEmoji : undefined,
+            emoteText: typeof raw?.emoteText === 'string' ? raw.emoteText : undefined,
+            emoteSeq: Number(raw.emoteSeq),
+          }
+        : {}),
     };
   };
 
@@ -1517,9 +1726,23 @@ export function joinMultiplayerRoom(
         callbacks.onVoteCast(payload);
       }
     })
+    .on('broadcast', { event: 'player_emote' }, ({ payload }: any) => {
+      if (payload && payload.userId && payload.userId !== localPlayer.userId) {
+        const resolvedId = resolveEmoteId(payload.emoteId || payload.emoji, payload.text);
+        callbacks.onPeerEmote?.({
+          userId: String(payload.userId),
+          nickname: typeof payload.nickname === 'string' ? payload.nickname : '선거인',
+          emoteId: resolvedId,
+          emoji: typeof payload.emoji === 'string' ? payload.emoji : '😊',
+          text: typeof payload.text === 'string' ? payload.text : '',
+          seq: Number.isFinite(Number(payload.seq)) ? Number(payload.seq) : Date.now(),
+        });
+      }
+    })
     .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
         subscribed = true;
+        callbacks.onConnectionChange?.(true);
         const safeX = Number.isFinite(Number(localPlayer.x)) ? Number(localPlayer.x) : -6.5;
         const safeZ = Number.isFinite(Number(localPlayer.z)) ? Number(localPlayer.z) : 0.5;
         const safeRotY = Number.isFinite(Number(localPlayer.rotY)) ? Number(localPlayer.rotY) : Math.PI;
@@ -1550,6 +1773,9 @@ export function joinMultiplayerRoom(
         } catch (err) {
           console.warn('[Supabase initial broadcast error]', err);
         }
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        subscribed = false;
+        callbacks.onConnectionChange?.(false);
       }
     });
 
@@ -1564,6 +1790,11 @@ export function joinMultiplayerRoom(
       return;
     }
 
+    const now = Date.now();
+    if (activeEmoteBroadcast && activeEmoteBroadcast.expiresAt <= now) {
+      activeEmoteBroadcast = null;
+    }
+
     try {
       channel.send({
         type: 'broadcast',
@@ -1576,6 +1807,14 @@ export function joinMultiplayerRoom(
           z,
           rotY: Number.isFinite(rotY) ? rotY : 0,
           isMoving: Boolean(state.isMoving),
+          ...(activeEmoteBroadcast
+            ? {
+                emoteId: activeEmoteBroadcast.emoteId,
+                emoteEmoji: activeEmoteBroadcast.emoji,
+                emoteText: activeEmoteBroadcast.text,
+                emoteSeq: activeEmoteBroadcast.seq,
+              }
+            : {}),
         },
       });
     } catch {
@@ -1644,6 +1883,34 @@ export function joinMultiplayerRoom(
         // silent fail
       }
     },
+    sendEmote: (emoji: string, text: string, explicitId?: EmoteId) => {
+      if (!subscribed) return;
+      const emoteId = resolveEmoteId(emoji, text, explicitId);
+      const seq = Date.now() * 1000 + (++emoteSeqCounter % 1000);
+      activeEmoteBroadcast = {
+        emoteId,
+        emoji,
+        text,
+        seq,
+        expiresAt: Date.now() + 2600,
+      };
+      try {
+        channel.send({
+          type: 'broadcast',
+          event: 'player_emote',
+          payload: {
+            userId: localPlayer.userId,
+            nickname: localPlayer.nickname,
+            emoteId,
+            emoji,
+            text,
+            seq,
+          },
+        });
+      } catch {
+        // silent fail
+      }
+    },
     leave: () => {
       if (subscribed) {
         try {
@@ -1655,6 +1922,7 @@ export function joinMultiplayerRoom(
         } catch {}
       }
       subscribed = false;
+      callbacks.onConnectionChange?.(false);
       try {
         channel.untrack();
       } catch {}

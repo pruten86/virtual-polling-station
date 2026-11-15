@@ -11,7 +11,12 @@ export interface StationLocation {
 export interface EnvironmentResult {
   sceneGroup: THREE.Group;
   stationLocations: StationLocation[];
-  updateBillboardTexture: (results: { id: string; title: string; votes: number; percent: number }[], totalVotes: number, pollTitle?: string) => void;
+  updateBillboardTexture: (
+    results: { id: string; title: string; votes: number; percent: number }[],
+    totalVotes: number,
+    pollTitle?: string,
+    isClosed?: boolean
+  ) => void;
   updateBeaconActive: (currentStep: number) => void;
   updateBannerTitle: (title: string, sub?: string) => void;
   ballotBoxMesh: THREE.Group;
@@ -862,7 +867,8 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   const updateBillboardTexture = (
     results: { id: string; title: string; votes: number; percent: number }[],
     totalVotes: number,
-    pollTitle?: string
+    pollTitle?: string,
+    isClosed = false
   ) => {
     // Dark modern digital dashboard
     bCtx.fillStyle = '#0f172a';
@@ -883,12 +889,13 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     bCtx.font = 'bold 30px "Pretendard", sans-serif';
     bCtx.textAlign = 'left';
     const headerTitle = pollTitle ? `● ${pollTitle}` : '● 실시간 개표 현황 (LIVE TALLY)';
-    bCtx.fillText(headerTitle.length > 28 ? headerTitle.slice(0, 28) + '...' : headerTitle, 48, 56);
+    bCtx.fillText(headerTitle.length > 26 ? headerTitle.slice(0, 26) + '...' : headerTitle, 48, 56);
 
-    bCtx.fillStyle = '#94a3b8';
-    bCtx.font = '500 22px sans-serif';
+    bCtx.fillStyle = isClosed ? '#34d399' : '#94a3b8';
+    bCtx.font = '600 22px "Pretendard", sans-serif';
     bCtx.textAlign = 'right';
-    bCtx.fillText(`총 투표: ${totalVotes}표 | 개표율: 100%`, 976, 56);
+    const statusLabel = isClosed ? '개표 완료 (100%)' : '실시간 집계 중';
+    bCtx.fillText(`총 투표: ${totalVotes}표 | ${statusLabel}`, 976, 56);
 
     // Horizontal divider
     bCtx.strokeStyle = '#334155';

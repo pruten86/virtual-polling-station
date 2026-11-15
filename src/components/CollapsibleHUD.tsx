@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { StationZone } from '../types';
+import { EmoteId } from '../scene/avatar';
 import { sounds } from '../sound';
 import {
   Volume2,
@@ -41,7 +42,16 @@ interface CollapsibleHUDProps {
   channelVotes?: number;
   cumulativeVotes?: number;
   onlineCount?: number;
+  isRealtimeConnected?: boolean;
+  onSendEmote?: (emoji: string, label: string, emoteId: EmoteId) => void;
 }
+
+const NEUTRAL_EMOTES: Array<{ id: EmoteId; emoji: string; label: string }> = [
+  { id: 'hello', emoji: '😊', label: '반가워요' },
+  { id: 'clap', emoji: '👏', label: '박수' },
+  { id: 'think', emoji: '🤔', label: '신중고민' },
+  { id: 'voted', emoji: '🗳️', label: '투표완료!' },
+];
 
 export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   currentStep,
@@ -67,6 +77,8 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   channelVotes = 0,
   cumulativeVotes = 0,
   onlineCount = 1,
+  isRealtimeConnected = false,
+  onSendEmote,
 }) => {
   // Top HUD collapse state (allows folding the step pipeline into a single line)
   const [isTopCollapsed, setIsTopCollapsed] = useState(false);
@@ -123,9 +135,11 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
           <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 sm:gap-2 px-0.5 sm:px-1 text-xs">
             {/* Left Brand and Channel / Voter Count Badge */}
             <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-wrap sm:flex-nowrap">
-              <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-sky-400 shrink-0" />
-              <span className="font-bold text-white text-xs sm:text-sm whitespace-nowrap shrink-0">
-                3D 가상 투표소
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-rose-500/20 border border-rose-500/50 text-rose-400 font-black text-[11px] shrink-0">
+                卜
+              </span>
+              <span className="font-extrabold text-white text-xs sm:text-sm whitespace-nowrap shrink-0 tracking-tight">
+                보트버스 VOTEVERSE
               </span>
 
               {pollTitle && (
@@ -167,13 +181,18 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                 )
               )}
 
-              {/* Concurrent Online Users Badge (Supabase Realtime Presence) */}
+              {/* Concurrent Online Users Badge + Live WebSocket Connection Status */}
               <span className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 whitespace-nowrap shrink-0">
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                </span>
                 <span>동시 접속 {onlineCount}명</span>
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold border whitespace-nowrap shrink-0 ${
+                  isRealtimeConnected
+                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                    : 'bg-amber-950/80 text-amber-300 border-amber-500/40'
+                }`}
+              >
+                <span>{isRealtimeConnected ? '🟢 실시간 연결됨' : '🟡 재연결 중'}</span>
               </span>
 
               <span className="text-slate-400 hidden lg:inline shrink-0">| 선거인:</span>
@@ -494,6 +513,29 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
           )}
         </div>
       </div>
+
+      {/* Bottom-Right Neutral Multiplayer Emote Buttons (Zero political/numeric gesture neutrality) */}
+      {onSendEmote && (
+        <div className="absolute bottom-24 right-2.5 lg:bottom-4 lg:right-4 z-20 pointer-events-auto">
+          <div className="grid grid-cols-2 gap-1.5 bg-slate-900/90 border border-slate-700/80 rounded-2xl p-1.5 shadow-xl">
+            {NEUTRAL_EMOTES.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onSendEmote(item.emoji, item.label, item.id);
+                }}
+                className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-slate-800/90 hover:bg-sky-600/30 border border-slate-700 hover:border-sky-400/50 text-slate-100 text-[10px] sm:text-[11px] font-bold transition active:scale-95 cursor-pointer whitespace-nowrap"
+                title={`아바타 감정표현: ${item.label}`}
+              >
+                <span>{item.emoji}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

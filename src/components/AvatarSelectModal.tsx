@@ -24,10 +24,10 @@ import {
   ensureAnonymousAuth,
   unlockPollAdminSession,
   isPollOwnerOrAdmin,
+  findPrivatePollByAccessCode,
 } from '../lib/voteverseBackend';
 import { getVoterUUID } from '../lib/supabase';
 import {
-  UserCheck,
   Sparkles,
   Dices,
   Vote,
@@ -170,6 +170,18 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     }
     return 'poll-lunch';
   });
+
+  // Keep selectedPollId synced when initialPollId (e.g. ?poll=ID) resolves asynchronously from DB
+  useEffect(() => {
+    if (!initialPollId) return;
+    const match = polls.find((p) => p.id === initialPollId);
+    if (match) {
+      setSelectedPollId(match.id);
+      if (match.category === 'private') {
+        setActiveTab((prev) => (prev === 'create' ? prev : 'private'));
+      }
+    }
+  }, [initialPollId, polls]);
 
   // Private Code Tab Input
   const [privateCode, setPrivateCode] = useState<string>('');
@@ -393,8 +405,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     setForbiddenKeywordError(null);
   };
 
-  // Join private poll with participant code
-  const handleJoinPrivate = (e: React.FormEvent) => {
+  // Join private poll with participant code (supports cross-device Supabase lookup)
+  const handleJoinPrivate = async (e: React.FormEvent) => {
     e.preventDefault();
     setPrivateCodeError(null);
     const code = privateCode.trim();
@@ -403,13 +415,25 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       return;
     }
 
-    const matched = polls.find(
+    let matched = polls.find(
       (p) => p.category === 'private' && (p.accessCode === code || p.id === code)
     );
 
+    if (!matched) {
+      const remotePrivate = await findPrivatePollByAccessCode(code);
+      if (remotePrivate) {
+        matched = remotePrivate;
+        setPolls((prev) => {
+          const next = [remotePrivate, ...prev.filter((p) => p.id !== remotePrivate.id)];
+          onPollsUpdated?.(next);
+          return next;
+        });
+      }
+    }
+
     if (matched) {
       sounds.playClick();
-      setUnlockedPrivatePollIds((prev) => new Set(prev).add(matched.id));
+      setUnlockedPrivatePollIds((prev) => new Set(prev).add(matched!.id));
       setSelectedPollId(matched.id);
       setPrivateCodeError(null);
       setPrivateCode('');
@@ -591,16 +615,25 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl p-5 sm:p-7 text-slate-100 my-auto">
-        {/* Header */}
+        {/* Header: 보트버스 (VOTEVERSE) Official Branding */}
         <div className="text-center mb-5">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-400 mb-2 shadow-inner">
-            <UserCheck className="w-6 h-6" />
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-rose-500/10 border-2 border-rose-500/60 text-rose-500 mb-2.5 shadow-lg shadow-rose-950/40">
+            <svg viewBox="0 0 64 64" className="w-8 h-8" aria-hidden="true">
+              <circle cx="32" cy="32" r="24" fill="none" stroke="currentColor" strokeWidth="4.5" />
+              <path
+                d="M32 15v34M32 32l14-7.5"
+                stroke="currentColor"
+                strokeWidth="6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
           <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
-            3D 가상 투표소 로비 & 아바타 선택
+            보트버스 VOTEVERSE
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            원하는 투표 안건을 선택하고 나만의 유권자 아바타로 입장하세요.
+          <p className="text-xs text-slate-300 mt-1 font-medium">
+            클릭 대신 발걸음으로, 우리가 만나는 3D 투표 광장
           </p>
         </div>
 

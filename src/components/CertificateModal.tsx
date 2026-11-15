@@ -47,17 +47,20 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
     ctx.lineWidth = 3;
     ctx.strokeRect(60, 60, 1080, 1480);
 
-    // Top Emblem Icon
-    ctx.fillStyle = '#0284c7';
+    // Top Emblem Icon (Red '卜' Ballot Stamp Mark)
+    ctx.fillStyle = '#fff1f2';
     ctx.beginPath();
     ctx.arc(600, 160, 48, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = '#e11d48';
+    ctx.lineWidth = 6;
+    ctx.stroke();
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 36px "Noto Sans KR", sans-serif';
+    ctx.fillStyle = '#e11d48';
+    ctx.font = 'bold 46px "Noto Sans KR", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('선거', 600, 160);
+    ctx.fillText('卜', 600, 162);
 
     // Certificate Title
     ctx.fillStyle = '#1c1917';
@@ -105,21 +108,21 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
     ctx.fillText(dateStr, 600, 1180);
 
     // Authority Title
-    ctx.font = 'bold 54px "Song Myung", serif';
+    ctx.font = 'bold 40px "Song Myung", serif';
     ctx.fillStyle = '#0c4a6e';
-    ctx.fillText('가상선거관리위원회위원장', 560, 1290);
+    ctx.fillText('보트버스(VOTEVERSE) 중앙일상선거관리위원회', 515, 1290);
 
     // Red Official Seal Stamp (도장)
-    const sealX = 890;
+    const sealX = 995;
     const sealY = 1290;
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 8;
     ctx.strokeRect(sealX - 70, sealY - 70, 140, 140);
 
     ctx.fillStyle = '#dc2626';
-    ctx.font = 'bold 30px "Noto Serif KR", serif';
-    ctx.fillText('가상선관', sealX, sealY - 20);
-    ctx.fillText('위원회인', sealX, sealY + 25);
+    ctx.font = 'bold 28px "Noto Serif KR", serif';
+    ctx.fillText('보트버스', sealX, sealY - 22);
+    ctx.fillText('선관위인', sealX, sealY + 24);
 
     // Watermark
     ctx.fillStyle = 'rgba(2, 132, 199, 0.05)';
@@ -187,9 +190,9 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
           >
             {/* Inner hairline border */}
             <div className="border border-[#c5a059]/60 p-3.5 sm:p-5 rounded-lg text-center relative">
-              {/* Top Emblem */}
-              <div className="inline-flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-sky-600 text-white font-sans font-bold text-xs sm:text-sm mb-2.5 shadow-sm">
-                선거
+              {/* Top Emblem (Red '卜' Ballot Stamp) */}
+              <div className="inline-flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-rose-50 border-2 border-rose-600 text-rose-600 font-sans font-black text-lg sm:text-xl mb-2.5 shadow-sm">
+                卜
               </div>
 
               {/* Title */}
@@ -246,13 +249,13 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
               </p>
 
               {/* Authority & Seal */}
-              <div className="flex items-center justify-center gap-3 pt-1">
-                <span className="text-xs sm:text-sm font-bold text-sky-950 tracking-wider font-cert">
-                  가상선거관리위원회위원장
+              <div className="flex items-center justify-center gap-2.5 pt-1 flex-wrap">
+                <span className="text-[11px] sm:text-xs font-bold text-sky-950 tracking-wide font-cert">
+                  보트버스(VOTEVERSE) 중앙일상선거관리위원회
                 </span>
-                <div className="w-9 h-9 sm:w-10 sm:h-10 border-2 border-red-600 text-red-600 flex flex-col items-center justify-center text-[7px] sm:text-[8px] font-bold leading-tight font-serif rounded-xs shadow-xs">
-                  <span>가상선관</span>
-                  <span>위원회인</span>
+                <div className="w-9 h-9 sm:w-10 sm:h-10 border-2 border-red-600 text-red-600 flex flex-col items-center justify-center text-[7px] sm:text-[8px] font-bold leading-tight font-serif rounded-xs shadow-xs shrink-0">
+                  <span>보트버스</span>
+                  <span>선관위인</span>
                 </div>
               </div>
             </div>

@@ -1,11 +1,90 @@
 import * as THREE from 'three';
 import { AvatarType } from '../types';
 
+export type EmoteId = 'hello' | 'clap' | 'think' | 'voted';
+
 export interface CharacterController {
   group: THREE.Group;
   update: (isMoving: boolean, dt: number, speed: number) => void;
   lookAtAngle: (angle: number) => void;
+  triggerEmote: (emojiOrId: string, text?: string, emoteId?: EmoteId) => void;
   type: AvatarType | 'npc';
+}
+
+const EMOTE_DEFAULTS: Record<EmoteId, { emoji: string; text: string }> = {
+  hello: { emoji: '😊', text: '반가워요' },
+  clap: { emoji: '👏', text: '박수' },
+  think: { emoji: '🤔', text: '신중고민' },
+  voted: { emoji: '🗳️', text: '투표완료!' },
+};
+
+export function resolveEmoteId(emojiOrId?: string, text?: string, explicitId?: EmoteId): EmoteId {
+  if (
+    explicitId === 'hello' ||
+    explicitId === 'clap' ||
+    explicitId === 'think' ||
+    explicitId === 'voted'
+  ) {
+    return explicitId;
+  }
+  const combined = `${emojiOrId || ''} ${text || ''}`.toLowerCase();
+  if (combined.includes('clap') || combined.includes('👏') || combined.includes('박수')) {
+    return 'clap';
+  }
+  if (combined.includes('think') || combined.includes('🤔') || combined.includes('고민')) {
+    return 'think';
+  }
+  if (combined.includes('voted') || combined.includes('🗳') || combined.includes('투표완료')) {
+    return 'voted';
+  }
+  return 'hello';
+}
+
+function createEmoteBubbleTexture(emoji: string, text: string): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 420;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Speech bubble card + bottom pointer
+  const x = 14;
+  const y = 10;
+  const w = canvas.width - 28;
+  const h = 88;
+  const r = 24;
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+  ctx.strokeStyle = '#0284c7';
+  ctx.lineWidth = 4;
+
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(canvas.width / 2 + 14, y + h);
+  ctx.lineTo(canvas.width / 2, y + h + 18);
+  ctx.lineTo(canvas.width / 2 - 14, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 34px "Pretendard", "Noto Sans KR", -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${emoji} ${text}`, canvas.width / 2, y + h / 2 + 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  return texture;
 }
 
 export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterController {
@@ -79,13 +158,17 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
     });
   }
 
+  // Inner animated body rig (allows 360-degree celebratory spin without affecting shadow disk or heading)
+  const rigGroup = new THREE.Group();
+  group.add(rigGroup);
+
   // --- Pelvis / Hips ---
   const pelvisGeo = new THREE.BoxGeometry(0.38, 0.16, 0.24);
   const pelvisMesh = new THREE.Mesh(pelvisGeo, slacksMat);
   pelvisMesh.position.y = 0.74;
   pelvisMesh.castShadow = true;
   pelvisMesh.receiveShadow = true;
-  group.add(pelvisMesh);
+  rigGroup.add(pelvisMesh);
 
   // --- Legs ---
   const legGeo = new THREE.BoxGeometry(0.14, 0.66, 0.16);
@@ -106,7 +189,7 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
   leftShoe.castShadow = true;
   leftLegPivot.add(leftShoe);
 
-  group.add(leftLegPivot);
+  rigGroup.add(leftLegPivot);
 
   // Right Leg Pivot
   const rightLegPivot = new THREE.Group();
@@ -123,12 +206,12 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
   rightShoe.castShadow = true;
   rightLegPivot.add(rightShoe);
 
-  group.add(rightLegPivot);
+  rigGroup.add(rightLegPivot);
 
   // --- Torso & Upper Body Pivot (for vertical bobbing) ---
   const upperBody = new THREE.Group();
   upperBody.position.y = 0.74;
-  group.add(upperBody);
+  rigGroup.add(upperBody);
 
   // Torso Mesh
   const torsoGeo = new THREE.BoxGeometry(0.42, 0.48, 0.26);
@@ -306,15 +389,76 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
   shadowDisk.position.y = 0.015;
   group.add(shadowDisk);
 
+  // Floating 3D Emote Speech Bubble Sprite (above nametag)
+  const emoteMat = new THREE.SpriteMaterial({
+    transparent: true,
+    depthTest: false,
+  });
+  const emoteSprite = new THREE.Sprite(emoteMat);
+  emoteSprite.position.set(0, 2.68, 0);
+  emoteSprite.scale.set(2.1, 0.64, 1);
+  emoteSprite.visible = false;
+  group.add(emoteSprite);
+
   // Animation state tracking
   let walkPhase = 0;
   let idleTime = Math.random() * 10;
   let currentAngle = 0;
+  let emoteRemaining = 0;
+  let emoteElapsed = 0;
+  let activeEmoteId: EmoteId = 'hello';
+  let hopOffsetY = 0;
+
+  const triggerEmote = (emojiOrId: string, text?: string, explicitId?: EmoteId) => {
+    const resolvedId = resolveEmoteId(emojiOrId, text, explicitId);
+    const defaults = EMOTE_DEFAULTS[resolvedId];
+    const displayEmoji =
+      emojiOrId === 'hello' || emojiOrId === 'clap' || emojiOrId === 'think' || emojiOrId === 'voted'
+        ? defaults.emoji
+        : emojiOrId || defaults.emoji;
+    const displayText = text && text.trim() ? text.trim() : defaults.text;
+
+    const prevMap = emoteMat.map;
+    const nextMap = createEmoteBubbleTexture(displayEmoji, displayText);
+    emoteMat.map = nextMap;
+    emoteMat.needsUpdate = true;
+    if (prevMap) {
+      prevMap.dispose();
+    }
+    emoteSprite.visible = true;
+    activeEmoteId = resolvedId;
+    emoteRemaining = 2.9;
+    emoteElapsed = 0;
+  };
 
   const update = (isMoving: boolean, dt: number, speed: number) => {
     idleTime += dt;
 
+    // Update 3-second speech bubble timer
+    if (emoteRemaining > 0) {
+      emoteRemaining -= dt;
+      emoteElapsed += dt;
+      if (emoteRemaining <= 0) {
+        emoteRemaining = 0;
+        emoteSprite.visible = false;
+      }
+    }
+
+    const isPlayingBodyEmote = emoteRemaining > 0 && !isMoving && type !== 'npc';
+
     if (isMoving) {
+      // Immediately clear emote hop/spin and restore neutral joint axes when walking begins
+      hopOffsetY = THREE.MathUtils.damp(hopOffsetY, 0, 16, dt);
+      if (Math.abs(rigGroup.rotation.y) > Math.PI) {
+        rigGroup.rotation.y = ((rigGroup.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+      }
+      rigGroup.rotation.y = THREE.MathUtils.damp(rigGroup.rotation.y, 0, 16, dt);
+      upperBody.rotation.x = THREE.MathUtils.damp(upperBody.rotation.x, 0, 14, dt);
+      leftArmPivot.rotation.z = THREE.MathUtils.damp(leftArmPivot.rotation.z, 0, 14, dt);
+      rightArmPivot.rotation.z = THREE.MathUtils.damp(rightArmPivot.rotation.z, 0, 14, dt);
+      headGroup.rotation.x = THREE.MathUtils.damp(headGroup.rotation.x, 0, 14, dt);
+      headGroup.rotation.z = THREE.MathUtils.damp(headGroup.rotation.z, 0, 14, dt);
+
       walkPhase += dt * (speed > 0 ? speed * 7.5 : 7.0);
 
       // Limbs swing back and forth smoothly
@@ -327,17 +471,121 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
       rightArmPivot.rotation.x = armAngle;
 
       // Vertical bounce on each step
-      upperBody.position.y = 0.74 + Math.abs(Math.sin(walkPhase * 2)) * 0.035;
+      upperBody.position.y = 0.74 + hopOffsetY + Math.abs(Math.sin(walkPhase * 2)) * 0.035;
       headGroup.rotation.y = Math.sin(walkPhase) * 0.06;
+    } else if (isPlayingBodyEmote) {
+      const t = emoteElapsed;
+
+      if (activeEmoteId === 'hello') {
+        // a) [😊 반가워요]: Right arm raised overhead (-2.4) & waving cheerfully + polite upperBody bow/nod + light rhythm
+        hopOffsetY = Math.abs(Math.sin(t * 5.0)) * 0.06;
+        rigGroup.rotation.y = THREE.MathUtils.damp(rigGroup.rotation.y, 0, 12, dt);
+
+        rightArmPivot.rotation.x = THREE.MathUtils.damp(rightArmPivot.rotation.x, -2.4, 15, dt);
+        rightArmPivot.rotation.z = Math.sin(t * 14) * 0.35;
+        leftArmPivot.rotation.x = THREE.MathUtils.damp(leftArmPivot.rotation.x, 0.08, 12, dt);
+        leftArmPivot.rotation.z = THREE.MathUtils.damp(leftArmPivot.rotation.z, -0.08, 12, dt);
+
+        leftLegPivot.rotation.x = THREE.MathUtils.damp(leftLegPivot.rotation.x, 0, 12, dt);
+        rightLegPivot.rotation.x = THREE.MathUtils.damp(rightLegPivot.rotation.x, 0, 12, dt);
+
+        // Polite greeting bow/lift in first ~1.2s, then gentle sway
+        const bowWave = t < 1.2 ? Math.sin((t / 1.2) * Math.PI) * 0.16 : 0;
+        upperBody.rotation.x = bowWave;
+        headGroup.rotation.x = bowWave * 0.9 + Math.sin(t * 6) * 0.06;
+        headGroup.rotation.y = Math.sin(t * 3.5) * 0.1;
+        headGroup.rotation.z = Math.sin(t * 7) * 0.08;
+        upperBody.position.y = 0.74 + hopOffsetY;
+      } else if (activeEmoteId === 'clap') {
+        // b) [👏 박수]: Stationary, both arms forward (-1.2), clapping together rapidly + nodding & shoulder bounce
+        hopOffsetY = THREE.MathUtils.damp(hopOffsetY, 0, 14, dt);
+        rigGroup.rotation.y = THREE.MathUtils.damp(rigGroup.rotation.y, 0, 12, dt);
+
+        const clapCycle = Math.abs(Math.sin(t * 18));
+        leftArmPivot.rotation.x = THREE.MathUtils.damp(leftArmPivot.rotation.x, -1.2, 18, dt);
+        rightArmPivot.rotation.x = THREE.MathUtils.damp(rightArmPivot.rotation.x, -1.2, 18, dt);
+        leftArmPivot.rotation.z = -0.35 + clapCycle * 0.3;
+        rightArmPivot.rotation.z = 0.35 - clapCycle * 0.3;
+
+        leftLegPivot.rotation.x = THREE.MathUtils.damp(leftLegPivot.rotation.x, 0, 12, dt);
+        rightLegPivot.rotation.x = THREE.MathUtils.damp(rightLegPivot.rotation.x, 0, 12, dt);
+
+        upperBody.rotation.x = Math.sin(t * 9) * 0.05;
+        headGroup.rotation.x = Math.sin(t * 9) * 0.14;
+        headGroup.rotation.y = THREE.MathUtils.damp(headGroup.rotation.y, 0, 10, dt);
+        headGroup.rotation.z = Math.sin(t * 4.5) * 0.05;
+        upperBody.position.y = 0.74 + Math.abs(Math.sin(t * 9)) * 0.025;
+      } else if (activeEmoteId === 'think') {
+        // c) [🤔 신중고민]: Calm stance, left arm at waist, right arm folded to chin, slow head tilt & look left/right
+        hopOffsetY = THREE.MathUtils.damp(hopOffsetY, 0, 14, dt);
+        rigGroup.rotation.y = THREE.MathUtils.damp(rigGroup.rotation.y, 0, 12, dt);
+
+        leftArmPivot.rotation.x = THREE.MathUtils.damp(leftArmPivot.rotation.x, -0.2, 10, dt);
+        leftArmPivot.rotation.z = THREE.MathUtils.damp(leftArmPivot.rotation.z, 0.4, 10, dt);
+        rightArmPivot.rotation.x = THREE.MathUtils.damp(rightArmPivot.rotation.x, -1.5, 12, dt);
+        rightArmPivot.rotation.z = THREE.MathUtils.damp(rightArmPivot.rotation.z, -0.45, 12, dt);
+
+        leftLegPivot.rotation.x = THREE.MathUtils.damp(leftLegPivot.rotation.x, 0, 12, dt);
+        rightLegPivot.rotation.x = THREE.MathUtils.damp(rightLegPivot.rotation.x, 0, 12, dt);
+
+        upperBody.rotation.x = THREE.MathUtils.damp(upperBody.rotation.x, 0.06, 8, dt);
+        headGroup.rotation.x = -0.05 + Math.sin(t * 2.0) * 0.05;
+        headGroup.rotation.z = Math.sin(t * 3.5) * 0.22;
+        headGroup.rotation.y = Math.cos(t * 2.5) * 0.25;
+        upperBody.position.y = 0.74 + Math.sin(t * 2) * 0.006;
+      } else {
+        // d) [🗳️ 투표완료!]: High celebratory V-hurrah jump + 360-degree spin + cheerful leg kicks
+        hopOffsetY = Math.abs(Math.sin(t * 7)) * 0.45;
+        // Two smooth 360-degree spins ending cleanly at 0 modulo 2π
+        const spinProgress = Math.min(t / 2.2, 1);
+        const easedSpin = 1 - Math.pow(1 - spinProgress, 2);
+        rigGroup.rotation.y = (easedSpin * Math.PI * 4) % (Math.PI * 2);
+
+        leftArmPivot.rotation.x = THREE.MathUtils.damp(leftArmPivot.rotation.x, -2.8, 18, dt);
+        rightArmPivot.rotation.x = THREE.MathUtils.damp(rightArmPivot.rotation.x, -2.8, 18, dt);
+        leftArmPivot.rotation.z = THREE.MathUtils.damp(leftArmPivot.rotation.z, -0.28, 14, dt);
+        rightArmPivot.rotation.z = THREE.MathUtils.damp(rightArmPivot.rotation.z, 0.28, 14, dt);
+
+        // Cheerful leg kicks in rhythm with jumps
+        const kick = Math.sin(t * 14) * 0.42;
+        leftLegPivot.rotation.x = kick;
+        rightLegPivot.rotation.x = -kick;
+
+        upperBody.rotation.x = -0.08;
+        headGroup.rotation.x = -0.12;
+        headGroup.rotation.y = THREE.MathUtils.damp(headGroup.rotation.y, 0, 10, dt);
+        headGroup.rotation.z = Math.sin(t * 7) * 0.1;
+        upperBody.position.y = 0.74 + hopOffsetY;
+      }
     } else {
-      // Idle relaxation
+      // Idle relaxation & smooth full-joint reset back to neutral zero posture
+      hopOffsetY = THREE.MathUtils.damp(hopOffsetY, 0, 12, dt);
+      if (Math.abs(rigGroup.rotation.y) > Math.PI) {
+        rigGroup.rotation.y = ((rigGroup.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+      }
+      rigGroup.rotation.y = THREE.MathUtils.damp(rigGroup.rotation.y, 0, 12, dt);
+      // Normalize completed full revolutions cleanly to 0 when nearly settled
+      if (Math.abs(rigGroup.rotation.y) < 0.01) {
+        rigGroup.rotation.y = 0;
+      }
+
       leftLegPivot.rotation.x = THREE.MathUtils.damp(leftLegPivot.rotation.x, 0, 10, dt);
       rightLegPivot.rotation.x = THREE.MathUtils.damp(rightLegPivot.rotation.x, 0, 10, dt);
+      upperBody.rotation.x = THREE.MathUtils.damp(upperBody.rotation.x, 0, 10, dt);
+      leftArmPivot.rotation.z = THREE.MathUtils.damp(leftArmPivot.rotation.z, 0, 10, dt);
+      rightArmPivot.rotation.z = THREE.MathUtils.damp(rightArmPivot.rotation.z, 0, 10, dt);
+      headGroup.rotation.x = THREE.MathUtils.damp(headGroup.rotation.x, 0, 10, dt);
+      headGroup.rotation.z = THREE.MathUtils.damp(headGroup.rotation.z, 0, 10, dt);
 
       // If NPC, gentle welcoming posture
       if (type === 'npc') {
         leftArmPivot.rotation.x = THREE.MathUtils.damp(leftArmPivot.rotation.x, -0.2, 5, dt);
-        rightArmPivot.rotation.x = THREE.MathUtils.damp(rightArmPivot.rotation.x, -0.4 + Math.sin(idleTime * 2.5) * 0.1, 5, dt);
+        rightArmPivot.rotation.x = THREE.MathUtils.damp(
+          rightArmPivot.rotation.x,
+          -0.4 + Math.sin(idleTime * 2.5) * 0.1,
+          5,
+          dt
+        );
         headGroup.rotation.y = Math.sin(idleTime * 0.8) * 0.15;
       } else {
         leftArmPivot.rotation.x = THREE.MathUtils.damp(leftArmPivot.rotation.x, 0, 10, dt);
@@ -346,7 +594,15 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
       }
 
       // Subtle breathing
-      upperBody.position.y = 0.74 + Math.sin(idleTime * 2) * 0.008;
+      upperBody.position.y = 0.74 + hopOffsetY + Math.sin(idleTime * 2) * 0.008;
+    }
+
+    pelvisMesh.position.y = 0.74 + hopOffsetY;
+    leftLegPivot.position.y = 0.7 + hopOffsetY;
+    rightLegPivot.position.y = 0.7 + hopOffsetY;
+
+    if (emoteSprite.visible) {
+      emoteSprite.position.y = 2.68 + hopOffsetY + Math.sin(emoteElapsed * 4.5) * 0.05;
     }
   };
 
@@ -359,6 +615,7 @@ export function createProceduralAvatar(type: AvatarType | 'npc'): CharacterContr
     group,
     update,
     lookAtAngle,
+    triggerEmote,
     type,
   };
 }

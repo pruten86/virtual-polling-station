@@ -5,7 +5,12 @@ import confetti from 'canvas-confetti';
 
 import { AvatarType, Candidate, StationZone, PollStation, PollChannelData } from './types';
 import { sounds } from './sound';
-import { createProceduralAvatar, createNameTagSprite, CharacterController } from './scene/avatar';
+import {
+  createProceduralAvatar,
+  createNameTagSprite,
+  CharacterController,
+  EmoteId,
+} from './scene/avatar';
 import { buildPollingStationEnvironment, EnvironmentResult } from './scene/environment';
 import {
   PRESET_POLLS,
@@ -20,6 +25,7 @@ import {
   ensurePresetPollsSeeded,
   ensurePollAndOptionsExist,
   fetchVoteversePolls,
+  fetchPollByIdFromDB,
   castVote,
   subscribePollRealtime,
   subscribeAllPollsRealtime,
@@ -225,6 +231,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [onlineCount, setOnlineCount] = useState<number>(1);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(false);
   const [guestbookMessages, setGuestbookMessages] = useState<GuestbookMessage[]>([]);
   const [isGuestbookLoading, setIsGuestbookLoading] = useState<boolean>(false);
 
@@ -286,6 +293,7 @@ export default function App() {
         targetRotY: number;
         isMoving: boolean;
         lastSeen: number;
+        lastEmoteSeq?: number;
       }
     >
   >(new Map());
@@ -325,12 +333,34 @@ export default function App() {
 
     ensurePresetPollsSeeded()
       .then(() => fetchVoteversePolls())
-      .then((fetched) => {
-        if (!isMounted || !fetched || fetched.length === 0) return;
-        setAllPolls(fetched);
+      .then(async (fetched) => {
+        if (!isMounted || !fetched) return;
 
-        const activeId = currentPollRef.current.id;
-        const matched = fetched.find((p) => p.id === activeId);
+        let pollQuery: string | null = null;
+        try {
+          pollQuery = new URLSearchParams(window.location.search).get('poll');
+        } catch {
+          pollQuery = null;
+        }
+
+        let mergedList = fetched;
+        const targetId = pollQuery || currentPollRef.current.id;
+        let matched = fetched.find((p) => p.id === targetId);
+
+        // Cross-device shared link fallback (especially for private polls excluded from public fetch)
+        if (!matched && pollQuery) {
+          const singleFromDb = await fetchPollByIdFromDB(pollQuery);
+          if (singleFromDb && isMounted) {
+            matched = singleFromDb;
+            mergedList = [singleFromDb, ...fetched.filter((p) => p.id !== singleFromDb.id)];
+          }
+        }
+
+        if (!isMounted) return;
+        if (mergedList.length > 0) {
+          setAllPolls(mergedList);
+        }
+
         if (matched) {
           setCurrentPoll(matched);
           setCandidates(matched.candidates);
@@ -563,7 +593,9 @@ export default function App() {
     [currentPoll.id, nickname]
   );
 
-  // Sync billboard & banner with latest candidate tallies and poll title
+  const isPollClosedForBoard = Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
+
+  // Sync billboard & banner with latest candidate tallies, poll title, and closed state
   useEffect(() => {
     if (envResultRef.current) {
       const total = candidates.reduce((s, c) => s + c.votes, 0);
@@ -573,10 +605,15 @@ export default function App() {
         votes: c.votes,
         percent: total > 0 ? Math.round((c.votes / total) * 100) : 0,
       }));
-      envResultRef.current.updateBillboardTexture(results, total, currentPoll.title);
+      envResultRef.current.updateBillboardTexture(
+        results,
+        total,
+        currentPoll.title,
+        isPollClosedForBoard
+      );
       envResultRef.current.updateBannerTitle(currentPoll.title);
     }
-  }, [candidates, currentPoll]);
+  }, [candidates, currentPoll, isPollClosedForBoard]);
 
   // Show quick toast notification
   const showToast = useCallback((msg: string) => {
@@ -627,6 +664,12 @@ export default function App() {
           sceneRef.current.add(controller.group);
         }
 
+        let initialEmoteSeq = 0;
+        if (peer.emoteId && peer.emoteSeq && peer.emoteSeq > 0) {
+          initialEmoteSeq = peer.emoteSeq;
+          controller.triggerEmote(peer.emoteEmoji || peer.emoteId, peer.emoteText, peer.emoteId);
+        }
+
         currentMap.set(peer.userId, {
           controller,
           nameTag,
@@ -637,6 +680,7 @@ export default function App() {
           targetRotY: safeRotY,
           isMoving: Boolean(peer.isMoving),
           lastSeen: Date.now(),
+          lastEmoteSeq: initialEmoteSeq,
         });
       } else {
         if (peer.nickname && peer.nickname !== existing.nickname) {
@@ -655,6 +699,14 @@ export default function App() {
         }
         existing.isMoving = Boolean(peer.isMoving);
         existing.lastSeen = Date.now();
+        if (peer.emoteId && peer.emoteSeq && peer.emoteSeq > (existing.lastEmoteSeq || 0)) {
+          existing.lastEmoteSeq = peer.emoteSeq;
+          existing.controller.triggerEmote(
+            peer.emoteEmoji || peer.emoteId,
+            peer.emoteText,
+            peer.emoteId
+          );
+        }
       }
 
       refreshOnlineCount();
@@ -697,6 +749,17 @@ export default function App() {
         onPresenceCount: (count) => {
           presenceCountRef.current = count;
           refreshOnlineCount();
+        },
+        onConnectionChange: (connected) => {
+          setIsRealtimeConnected(connected);
+        },
+        onPeerEmote: ({ userId, emoteId, emoji, text, seq }) => {
+          if (userId === multiplayerPeerId) return;
+          const entry = currentMap.get(userId);
+          if (entry && (!seq || seq > (entry.lastEmoteSeq || 0))) {
+            if (seq) entry.lastEmoteSeq = seq;
+            entry.controller.triggerEmote(emoji || emoteId, text, emoteId);
+          }
         },
         onVoteCast: ({ userId, nickname: voterName }) => {
           // Toast notification ONLY - do NOT locally increment candidate tallies here
@@ -768,6 +831,7 @@ export default function App() {
       currentMap.clear();
       presenceCountRef.current = 1;
       setOnlineCount(1);
+      setIsRealtimeConnected(false);
     };
   }, [currentPoll?.id, hasEntered, isLobbyOpen, multiplayerPeerId]);
 
@@ -1614,6 +1678,11 @@ export default function App() {
     }
   };
 
+  const handleSendEmote = useCallback((emoji: string, label: string, emoteId: EmoteId) => {
+    playerRef.current?.triggerEmote(emoji, label, emoteId);
+    roomHandleRef.current?.sendEmote(emoji, label, emoteId);
+  }, []);
+
   const handleToggleMute = () => {
     const next = !isMuted;
     sounds.isMuted = next;
@@ -1719,6 +1788,8 @@ export default function App() {
           channelVotes={officialChannelState.channelVotes}
           cumulativeVotes={officialChannelState.totalCumulativeVotes}
           onlineCount={onlineCount}
+          isRealtimeConnected={isRealtimeConnected}
+          onSendEmote={handleSendEmote}
           onOpenLobby={() => {
             sounds.playClick();
             setIsLobbyOpen(true);
