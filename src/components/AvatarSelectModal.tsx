@@ -484,19 +484,23 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
         </div>
 
         {/* 1. Voter Nickname Input with 🎲 Random Button */}
-        <div className="mb-5 bg-slate-800/60 border border-slate-700/70 rounded-xl p-3.5">
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <span>선거인 닉네임 (성명)</span>
-              <span className="text-[10px] text-sky-400 font-normal">자동 생성 또는 직접 수정</span>
+        <div className="mb-5 bg-slate-800/60 border border-slate-700/70 rounded-xl px-2.5 py-2.5 sm:p-4">
+          <div className="flex items-center justify-between gap-1 sm:gap-2 flex-nowrap w-full mb-1.5">
+            <label className="flex items-center gap-1 sm:gap-2 flex-nowrap min-w-0 shrink-0">
+              <span className="text-[11px] sm:text-xs font-bold text-slate-300 tracking-tight whitespace-nowrap shrink-0">
+                선거인 닉네임 (성명)
+              </span>
+              <span className="text-[10px] sm:text-xs text-sky-400 font-normal tracking-tighter sm:tracking-normal whitespace-nowrap shrink-0">
+                자동 생성 또는 직접 수정
+              </span>
             </label>
             <button
               type="button"
               onClick={handleRollNickname}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 text-xs font-semibold transition active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 text-[10px] sm:text-xs font-semibold whitespace-nowrap shrink-0 transition active:scale-95 cursor-pointer"
             >
-              <Dices className="w-3.5 h-3.5 text-sky-300" />
-              <span>랜덤 닉네임 뽑기</span>
+              <Dices className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-300 shrink-0" />
+              <span className="whitespace-nowrap">랜덤 닉네임 뽑기</span>
             </button>
           </div>
 
@@ -525,20 +529,20 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
           </div>
 
           {/* Tab Buttons */}
-          <div className="grid grid-cols-3 gap-1.5 bg-slate-800/80 p-1 rounded-xl mb-3 border border-slate-700/80">
+          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 bg-slate-800/80 p-1 rounded-xl mb-3 border border-slate-700/80">
             <button
               type="button"
               onClick={() => {
                 sounds.playClick();
                 setActiveTab('public');
               }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+              className={`flex items-center justify-center gap-1 sm:gap-1.5 py-2 px-1 sm:px-2 rounded-lg text-[11px] sm:text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${
                 activeTab === 'public'
                   ? 'bg-sky-500 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Users className="w-3.5 h-3.5" />
+              <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
               <span>열린 광장</span>
             </button>
 
@@ -548,13 +552,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                 sounds.playClick();
                 setActiveTab('private');
               }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+              className={`flex items-center justify-center gap-1 sm:gap-1.5 py-2 px-1 sm:px-2 rounded-lg text-[11px] sm:text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${
                 activeTab === 'private'
                   ? 'bg-sky-500 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Lock className="w-3.5 h-3.5" />
+              <Lock className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
               <span>코드 입장</span>
             </button>
 
@@ -564,13 +568,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                 sounds.playClick();
                 setActiveTab('create');
               }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+              className={`flex items-center justify-center gap-1 sm:gap-1.5 py-2 px-1 sm:px-2 rounded-lg text-[11px] sm:text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${
                 activeTab === 'create'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <PlusCircle className="w-3.5 h-3.5" />
+              <PlusCircle className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
               <span>+ 새 투표소</span>
             </button>
           </div>
@@ -625,22 +629,22 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {poll.isOfficial ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30 inline-flex items-center gap-1">
-                              <Layers className="w-3 h-3 text-sky-400" />
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30 inline-flex items-center gap-1 whitespace-nowrap shrink-0">
+                              <Layers className="w-3 h-3 text-sky-400 shrink-0" />
                               <span>공식 ({channelBadge})</span>
                             </span>
                           ) : (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30 whitespace-nowrap shrink-0">
                               사용자 개설
                             </span>
                           )}
 
                           {isTimeClosed ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50 whitespace-nowrap shrink-0">
                               🏁 투표 마감 · 개표 완료
                             </span>
                           ) : isFull ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 whitespace-nowrap shrink-0">
                               정원 마감 (결과 열람 전용)
                             </span>
                           ) : null}
@@ -668,19 +672,19 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                       {/* Meta Stats + Action Buttons (Responsive Wrap) */}
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-0.5">
                         <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold whitespace-nowrap shrink-0">
                             <span>🟢 현재 접속 {liveCount}명</span>
                           </span>
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-bold">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-bold whitespace-nowrap shrink-0">
                             <span>🗳️ 누적 투표 {totalVotes}명</span>
                           </span>
-                          <span className="text-slate-400">{voterDetailText}</span>
+                          <span className="text-slate-400 whitespace-nowrap shrink-0">{voterDetailText}</span>
                           <span
-                            className={`flex items-center gap-1 font-semibold ${
+                            className={`flex items-center gap-1 font-semibold whitespace-nowrap shrink-0 ${
                               isTimeClosed ? 'text-rose-300' : 'text-amber-300/90'
                             }`}
                           >
-                            <Clock className="w-3 h-3" />
+                            <Clock className="w-3 h-3 shrink-0" />
                             <span>{remainingTimeStr}</span>
                           </span>
                         </div>
@@ -695,7 +699,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                 onOpenResultsDirect(poll);
                               }}
                               title="개표결과 및 방명록 바로보기"
-                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition cursor-pointer border ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold whitespace-nowrap shrink-0 transition cursor-pointer border ${
                                 isTimeClosed
                                   ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400 text-white shadow-sm'
                                   : 'bg-slate-700/80 hover:bg-sky-600 border-slate-600 text-slate-200 hover:text-white'
@@ -778,7 +782,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                 sounds.playClick();
                                 onOpenResultsDirect(poll, true);
                               }}
-                              className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[10px] font-bold transition cursor-pointer shrink-0 self-end sm:self-auto"
+                              className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[10px] font-bold whitespace-nowrap transition cursor-pointer shrink-0 self-end sm:self-auto"
                             >
                               <Trophy className="w-3 h-3 text-amber-300 shrink-0" />
                               <span>당선증·공고문 저장</span>
@@ -821,7 +825,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                   />
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white font-bold text-xs rounded-lg transition cursor-pointer shrink-0"
+                    className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white font-bold text-xs rounded-lg transition cursor-pointer whitespace-nowrap shrink-0"
                   >
                     코드 확인
                   </button>
@@ -874,11 +878,11 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                     {p.title}
                                   </span>
                                   {isTimeClosed ? (
-                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40">
+                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40 whitespace-nowrap shrink-0">
                                       🏁 투표 마감 · 개표 완료
                                     </span>
                                   ) : isFull ? (
-                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 whitespace-nowrap shrink-0">
                                       마감
                                     </span>
                                   ) : null}
@@ -887,13 +891,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
                               <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] text-emerald-300 font-bold">
+                                  <span className="text-[10px] text-emerald-300 font-bold whitespace-nowrap shrink-0">
                                     🟢 {liveCount}명
                                   </span>
-                                  <span className="text-[10px] text-sky-300 font-bold">
+                                  <span className="text-[10px] text-sky-300 font-bold whitespace-nowrap shrink-0">
                                     🗳️ {totalVotes}명
                                   </span>
-                                  <span className="text-[10px] text-amber-300/80">
+                                  <span className="text-[10px] text-amber-300/80 whitespace-nowrap shrink-0">
                                     {remainingStr}
                                   </span>
                                 </div>
@@ -907,7 +911,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                         sounds.playClick();
                                         onOpenResultsDirect(p);
                                       }}
-                                      className="px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold transition cursor-pointer"
+                                      className="px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
                                     >
                                       결과보기
                                     </button>
@@ -961,9 +965,9 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                         sounds.playClick();
                                         onOpenResultsDirect(p, true);
                                       }}
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[9px] font-bold transition cursor-pointer shrink-0 self-end sm:self-auto"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[9px] font-bold transition cursor-pointer whitespace-nowrap shrink-0 self-end sm:self-auto"
                                     >
-                                      <Trophy className="w-2.5 h-2.5" />
+                                      <Trophy className="w-2.5 h-2.5 shrink-0" />
                                       <span>당선증·공고문</span>
                                     </button>
                                   )}
@@ -1103,9 +1107,9 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
           <button
             type="button"
             onClick={(e) => handleCopyLink(selectedPoll.id, e)}
-            className="text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold shrink-0 cursor-pointer self-end sm:self-auto"
+            className="text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold whitespace-nowrap shrink-0 cursor-pointer self-end sm:self-auto"
           >
-            <Copy className="w-3 h-3" />
+            <Copy className="w-3 h-3 shrink-0" />
             <span>{copiedId === selectedPoll.id ? '링크 복사됨!' : '공유 링크 복사'}</span>
           </button>
         </div>
