@@ -323,12 +323,86 @@ export const PRESET_POLLS: PollStation[] = [
 const STORAGE_KEY_POLLS = 'vps_all_polling_stations_v3';
 const STORAGE_KEY_TALLIES_PREFIX = 'vps_tally_v3_';
 const STORAGE_KEY_CHANNELS_PREFIX = 'vps_channels_v3_';
+const STORAGE_KEY_CLOSED_OVERRIDES = 'vps_closed_polls_v1';
+
+export function getClosedPollOverrides(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CLOSED_OVERRIDES);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+export function setClosedPollOverride(pollId: string, closedAt: number): void {
+  try {
+    const overrides = getClosedPollOverrides();
+    overrides[pollId] = closedAt;
+    localStorage.setItem(STORAGE_KEY_CLOSED_OVERRIDES, JSON.stringify(overrides));
+
+    const raw = localStorage.getItem(STORAGE_KEY_POLLS);
+    if (raw) {
+      const parsed = JSON.parse(raw) as PollStation[];
+      const updated = parsed.map((p) => (p.id === pollId ? { ...p, expiresAt: closedAt } : p));
+      localStorage.setItem(STORAGE_KEY_POLLS, JSON.stringify(updated));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export interface PollWinnerSummary {
+  hasVotes: boolean;
+  isTie: boolean;
+  winners: Candidate[];
+  maxVotes: number;
+  totalVotes: number;
+  percent: number;
+  summaryText: string;
+}
+
+export function getPollWinnerSummary(candidates: Candidate[]): PollWinnerSummary {
+  const totalVotes = candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
+  if (totalVotes <= 0 || candidates.length === 0) {
+    return {
+      hasVotes: false,
+      isTie: false,
+      winners: [],
+      maxVotes: 0,
+      totalVotes: 0,
+      percent: 0,
+      summaryText: '투표 없음 (0표)',
+    };
+  }
+
+  const maxVotes = Math.max(...candidates.map((c) => Number(c.votes) || 0));
+  const winners = candidates.filter((c) => (Number(c.votes) || 0) === maxVotes);
+  const percent = Math.round((maxVotes / totalVotes) * 100);
+  const isTie = winners.length > 1;
+  const winnerNames = winners.map((w) => w.title).join(', ');
+
+  return {
+    hasVotes: true,
+    isTie,
+    winners,
+    maxVotes,
+    totalVotes,
+    percent,
+    summaryText: isTie
+      ? `공동 1위: ${winnerNames} (${maxVotes}표 · ${percent}%)`
+      : `1위: ${winnerNames} (${maxVotes}표 · ${percent}%)`,
+  };
+}
 
 // Format human-readable remaining time
 export function formatRemainingTime(expiresAt?: number): string {
   if (!expiresAt) return '상시 운영';
   const diff = expiresAt - Date.now();
-  if (diff <= 0) return '시간 만료 (마감)';
+  if (diff <= 0) return '투표 마감';
 
   const totalSecs = Math.floor(diff / 1000);
   const days = Math.floor(totalSecs / 86400);
@@ -355,27 +429,26 @@ export function isPollExpired(poll: PollStation): boolean {
 }
 
 export function getAllPolls(): PollStation[] {
+  const closedOverrides = getClosedPollOverrides();
+  const presetsWithOverrides = PRESET_POLLS.map((p) =>
+    closedOverrides[p.id] ? { ...p, expiresAt: closedOverrides[p.id] } : p
+  );
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY_POLLS);
     if (raw) {
       const parsed = JSON.parse(raw) as PollStation[];
-      const now = Date.now();
-      // Filter out custom polls that have expired
-      const validCustom = parsed.filter(
-        (p) => p.isCustom && (!p.expiresAt || p.expiresAt > now)
-      );
+      // Preserve ALL custom polls including expired ones so results remain inspectable in Lobby
+      const customPolls = parsed
+        .filter((p) => p.isCustom)
+        .map((p) => (closedOverrides[p.id] ? { ...p, expiresAt: closedOverrides[p.id] } : p));
 
-      // Re-persist if any expired custom poll was purged
-      if (validCustom.length !== parsed.filter((p) => p.isCustom).length) {
-        localStorage.setItem(STORAGE_KEY_POLLS, JSON.stringify(validCustom));
-      }
-
-      return [...PRESET_POLLS, ...validCustom];
+      return [...presetsWithOverrides, ...customPolls];
     }
   } catch {
     // ignore
   }
-  return PRESET_POLLS;
+  return presetsWithOverrides;
 }
 
 export function savePoll(poll: PollStation): void {
@@ -879,7 +952,7 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
           description: poll.description,
           category: poll.category,
           max_voters: poll.maxVoters,
-          duration_hours: poll.durationHours || 24,
+          duration_hours: Math.max(1, Math.round(poll.durationHours || 24)),
           expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
           created_at: new Date().toISOString(),
         },

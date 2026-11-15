@@ -12,12 +12,20 @@ import {
   BETA_DISCLAIMER_TEXT,
   checkPoliticalContent,
   formatRemainingTime,
+  isPollExpired,
+  getPollWinnerSummary,
 } from '../data/presetPolls';
 import {
   fetchVoteversePolls,
   createVoteversePoll,
   subscribeAllPollsRealtime,
+  subscribeLobbyPresenceCounts,
+  subscribePollsMetaRealtime,
+  ensureAnonymousAuth,
+  unlockPollAdminSession,
+  isPollOwnerOrAdmin,
 } from '../lib/voteverseBackend';
+import { getVoterUUID } from '../lib/supabase';
 import {
   UserCheck,
   Sparkles,
@@ -40,27 +48,31 @@ import {
   KeyRound,
   Pencil,
   X,
+  BarChart3,
+  Award,
 } from 'lucide-react';
 
 interface AvatarSelectModalProps {
   initialPollId?: string | null;
   externalPolls?: PollStation[];
   onPollsUpdated?: (polls: PollStation[]) => void;
+  onOpenResultsDirect?: (poll: PollStation) => void;
   onEnter: (nickname: string, avatarType: AvatarType, selectedPoll: PollStation) => void;
 }
 
 const DURATION_OPTIONS = [
-  { hours: 1, label: '1시간' },
-  { hours: 3, label: '3시간' },
-  { hours: 6, label: '6시간' },
-  { hours: 12, label: '12시간' },
-  { hours: 24, label: '24시간' },
+  { hours: 1 / 60, label: '1분 후 (테스트)', display: '1분 후 마감 (테스트용)' },
+  { hours: 3 / 60, label: '3분 후', display: '3분 후 마감' },
+  { hours: 1, label: '1시간 후', display: '1시간 후 마감' },
+  { hours: 24, label: '1일 후', display: '1일 후 (24시간)' },
+  { hours: 168, label: '7일 후', display: '7일 후 (168시간)' },
 ];
 
 export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   initialPollId,
   externalPolls,
   onPollsUpdated,
+  onOpenResultsDirect,
   onEnter,
 }) => {
   // 1. Nickname state with auto-generation
@@ -82,6 +94,9 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       setPolls(externalPolls);
     }
   }, [externalPolls]);
+
+  // Live per-poll concurrent visitor counts via Supabase Lobby Presence
+  const [livePresenceCounts, setLivePresenceCounts] = useState<Record<string, number>>({});
 
   // Periodic tick for live countdown timer, DB fetch on lobby open, and global poll_options Realtime subscription
   const [, setTick] = useState<number>(0);
@@ -114,15 +129,35 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       });
     });
 
+    // Subscribe to live per-poll visitor presence counts across the platform
+    const unsubscribeLobbyPresence = subscribeLobbyPresenceCounts((counts) => {
+      if (isMounted) {
+        setLivePresenceCounts(counts);
+      }
+    });
+
+    // Subscribe to immediate poll close / expires_at updates
+    const unsubscribeMeta = subscribePollsMetaRealtime((pollId, expiresAt) => {
+      if (!isMounted) return;
+      setPolls((prev) => {
+        const next = prev.map((p) => (p.id === pollId ? { ...p, expiresAt } : p));
+        queueMicrotask(() => {
+          if (isMounted) onPollsUpdated?.(next);
+        });
+        return next;
+      });
+    });
+
+    // Keep ticking every second to refresh remaining countdowns (NEVER delete/hide expired polls)
     const timer = setInterval(() => {
       setTick((t) => t + 1);
-      const now = Date.now();
-      setPolls((prev) => prev.filter((p) => !p.expiresAt || p.expiresAt > now));
     }, 1000);
 
     return () => {
       isMounted = false;
       unsubscribeAll();
+      unsubscribeLobbyPresence();
+      unsubscribeMeta();
       clearInterval(timer);
     };
   }, [onPollsUpdated]);
@@ -312,6 +347,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
     const finalCapacity = Math.max(2, Math.min(100, Number(newMaxVoters) || 100));
     const expiresAt = Date.now() + selectedDurationHours * 3600 * 1000;
+    const creatorOwnerId = (await ensureAnonymousAuth()) || getVoterUUID();
 
     const createdPoll: PollStation = {
       id: newId,
@@ -320,6 +356,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       category: isPrivateCreate ? 'private' : 'public',
       accessCode: isPrivateCreate ? newPasscode.trim() : undefined,
       adminPin: cleanAdminPin,
+      ownerId: creatorOwnerId,
       maxVoters: finalCapacity,
       candidates: formattedCandidates,
       createdAt: new Date().toISOString().split('T')[0],
@@ -386,12 +423,17 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     e.preventDefault();
     if (!adminAuthModal) return;
 
+    const targetPoll = adminAuthModal.poll;
     const inputPin = adminPinInput.trim();
-    const correctPin = adminAuthModal.poll.adminPin;
+    const correctPin = targetPoll.adminPin;
 
-    if (!correctPin || inputPin === correctPin) {
+    const isAuthorized = correctPin
+      ? inputPin === correctPin
+      : isPollOwnerOrAdmin(targetPoll);
+
+    if (isAuthorized) {
       sounds.playClick();
-      const targetPoll = adminAuthModal.poll;
+      unlockPollAdminSession(targetPoll.id);
 
       if (adminAuthModal.type === 'delete') {
         deletePollAsync(targetPoll.id);
@@ -656,29 +698,31 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
           {/* Tab 1: Public Polls List */}
           {activeTab === 'public' && (
-            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
               {polls
                 .filter((p) => p.category !== 'private')
                 .map((poll) => {
                   const isSelected = selectedPollId === poll.id;
                   const isCopied = copiedId === poll.id;
+                  const totalVotes = poll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
+                  const liveCount = livePresenceCounts[poll.id] || 0;
+                  const isTimeClosed = isPollExpired(poll);
+                  const winnerSummary = getPollWinnerSummary(poll.candidates);
 
                   let channelBadge = '';
-                  let voterInfoText = '';
+                  let voterDetailText = '';
                   let isFull = false;
 
                   if (poll.isOfficial) {
-                    const dbTotal = poll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
-                    const activeChannelIndex = Math.floor(dbTotal / 100) + 1;
-                    const channelVotes = dbTotal % 100;
+                    const activeChannelIndex = Math.floor(totalVotes / 100) + 1;
+                    const channelVotes = totalVotes % 100;
                     channelBadge = `제${activeChannelIndex}투표소`;
-                    voterInfoText = `${channelBadge} • ${channelVotes} / 100명 (누적 ${dbTotal}명)`;
+                    voterDetailText = `${channelBadge} (${channelVotes}/100명)`;
                     isFull = false;
                   } else {
-                    const totalVotes = poll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
                     const maxCap = poll.maxVoters || 100;
                     isFull = totalVotes >= maxCap;
-                    voterInfoText = `참여: ${totalVotes} / ${maxCap}명`;
+                    voterDetailText = `정원 ${maxCap}명`;
                   }
 
                   const remainingTimeStr = formatRemainingTime(poll.expiresAt);
@@ -690,106 +734,165 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         sounds.playClick();
                         setSelectedPollId(poll.id);
                       }}
-                      className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                         isSelected
                           ? 'bg-sky-950/60 border-sky-400 ring-1 ring-sky-400/40 shadow-sm'
+                          : isTimeClosed
+                          ? 'bg-slate-800/50 border-slate-700/80 hover:bg-slate-800 hover:border-slate-500'
                           : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800 hover:border-slate-600'
                       }`}
                     >
-                      <div className="min-w-0 flex-1 pr-2">
-                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                          {poll.isOfficial ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30 flex items-center gap-1">
-                              <Layers className="w-3 h-3 text-sky-400" />
-                              <span>공식 채널형 ({channelBadge})</span>
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30">
-                              사용자 개설
-                            </span>
-                          )}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                            {poll.isOfficial ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30 flex items-center gap-1">
+                                <Layers className="w-3 h-3 text-sky-400" />
+                                <span>공식 ({channelBadge})</span>
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30">
+                                사용자 개설
+                              </span>
+                            )}
 
-                          {isFull && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                              정원 마감 (결과 열람 전용)
-                            </span>
-                          )}
+                            {isTimeClosed ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50">
+                                🏁 투표 마감 · 개표 완료
+                              </span>
+                            ) : isFull ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                정원 마감 (결과 열람 전용)
+                              </span>
+                            ) : null}
 
-                          <span className="text-xs font-bold text-white truncate">{poll.title}</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 truncate">{poll.description}</p>
-                        <div className="flex items-center gap-2.5 mt-1 text-[10px] text-slate-400 flex-wrap">
-                          <span>후보 {poll.candidates.length}개</span>
-                          <span>•</span>
-                          <span className={isFull ? 'text-rose-400 font-bold' : 'text-slate-300 font-medium'}>
-                            {voterInfoText}
-                          </span>
-                          <span>•</span>
-                          <span className="text-amber-300/90 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            <span>{remainingTimeStr}</span>
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Custom Poll Edit & Delete Buttons */}
-                        {poll.isCustom && (
-                          <div className="flex items-center gap-1 mr-1">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                sounds.playClick();
-                                setAdminAuthModal({ type: 'edit', poll });
-                                setAdminPinInput('');
-                                setAdminPinError(null);
-                              }}
-                              title="개설자 관리 비밀번호로 수정"
-                              className="p-1.5 rounded-lg bg-slate-700/70 hover:bg-sky-600 text-slate-300 hover:text-white transition cursor-pointer"
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                sounds.playClick();
-                                setAdminAuthModal({ type: 'delete', poll });
-                                setAdminPinInput('');
-                                setAdminPinError(null);
-                              }}
-                              title="개설자 관리 비밀번호로 삭제"
-                              className="p-1.5 rounded-lg bg-slate-700/70 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                            <span className="text-xs font-bold text-white truncate">{poll.title}</span>
                           </div>
-                        )}
 
-                        {/* Copy Link Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => handleCopyLink(poll.id, e)}
-                          title="투표소 공유 링크 복사"
-                          className="p-1.5 rounded-lg bg-slate-700/70 hover:bg-slate-600 text-slate-300 hover:text-white transition cursor-pointer"
-                        >
-                          {isCopied ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
+                          <p className="text-[11px] text-slate-400 truncate">{poll.description}</p>
+
+                          {/* Live Concurrent Visitors + Cumulative Votes + Timer */}
+                          <div className="flex items-center gap-2 mt-1.5 text-[10px] flex-wrap">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                              <span>🟢 현재 접속 {liveCount}명</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-bold">
+                              <span>🗳️ 누적 투표 {totalVotes}명</span>
+                            </span>
+                            <span className="text-slate-400">{voterDetailText}</span>
+                            <span
+                              className={`flex items-center gap-1 font-semibold ${
+                                isTimeClosed ? 'text-rose-300' : 'text-amber-300/90'
+                              }`}
+                            >
+                              <Clock className="w-3 h-3" />
+                              <span>{remainingTimeStr}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Direct Results Preview Button */}
+                          {onOpenResultsDirect && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                sounds.playClick();
+                                onOpenResultsDirect(poll);
+                              }}
+                              title="개표결과 및 방명록 바로보기"
+                              className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold transition cursor-pointer border ${
+                                isTimeClosed
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400 text-white shadow-sm'
+                                  : 'bg-slate-700/80 hover:bg-sky-600 border-slate-600 text-slate-200 hover:text-white'
+                              }`}
+                            >
+                              <BarChart3 className="w-3 h-3" />
+                              <span className="hidden sm:inline">개표결과 바로보기</span>
+                              <span className="sm:hidden">결과</span>
+                            </button>
                           )}
-                        </button>
 
-                        <div
-                          className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                            isSelected ? 'border-sky-400 bg-sky-500 text-white' : 'border-slate-600'
-                          }`}
-                        >
-                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          {/* Custom Poll Edit & Delete Buttons */}
+                          {poll.isCustom && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  sounds.playClick();
+                                  setAdminAuthModal({ type: 'edit', poll });
+                                  setAdminPinInput('');
+                                  setAdminPinError(null);
+                                }}
+                                title="개설자 관리 비밀번호로 수정"
+                                className="p-1.5 rounded-lg bg-slate-700/70 hover:bg-sky-600 text-slate-300 hover:text-white transition cursor-pointer"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  sounds.playClick();
+                                  setAdminAuthModal({ type: 'delete', poll });
+                                  setAdminPinInput('');
+                                  setAdminPinError(null);
+                                }}
+                                title="개설자 관리 비밀번호로 삭제"
+                                className="p-1.5 rounded-lg bg-slate-700/70 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Copy Link Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleCopyLink(poll.id, e)}
+                            title="투표소 공유 링크 복사"
+                            className="p-1.5 rounded-lg bg-slate-700/70 hover:bg-slate-600 text-slate-300 hover:text-white transition cursor-pointer"
+                          >
+                            {isCopied ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+
+                          <div
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                              isSelected ? 'border-sky-400 bg-sky-500 text-white' : 'border-slate-600'
+                            }`}
+                          >
+                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </div>
                         </div>
                       </div>
+
+                      {/* Closed Poll Final Winner Summary Box */}
+                      {isTimeClosed && (
+                        <div className="mt-2.5 px-2.5 py-2 rounded-lg bg-slate-900/85 border border-emerald-500/35 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0 text-[11px]">
+                            <Award className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            {winnerSummary.hasVotes ? (
+                              <span className="text-emerald-300 font-bold truncate">
+                                최종 결과 · {winnerSummary.summaryText}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-semibold">
+                                최종 결과 · 투표 없음 (0표)
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 shrink-0">
+                            후보 {poll.candidates.length}개
+                          </span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -842,10 +945,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         .filter((p) => p.category === 'private')
                         .map((p) => {
                           const isUnlocked = unlockedPrivatePollIds.has(p.id);
-                          const totalVotes = p.candidates.reduce((s, c) => s + c.votes, 0);
+                          const totalVotes = p.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
+                          const liveCount = livePresenceCounts[p.id] || 0;
                           const maxCap = p.maxVoters || 100;
                           const isFull = totalVotes >= maxCap;
+                          const isTimeClosed = isPollExpired(p);
                           const remainingStr = formatRemainingTime(p.expiresAt);
+                          const winnerSummary = getPollWinnerSummary(p.candidates);
 
                           return (
                             <div
@@ -854,68 +960,97 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                 sounds.playClick();
                                 setSelectedPollId(p.id);
                               }}
-                              className={`p-2.5 rounded-lg border text-xs flex justify-between items-center cursor-pointer transition ${
+                              className={`p-2.5 rounded-lg border text-xs cursor-pointer transition ${
                                 selectedPollId === p.id
                                   ? 'bg-amber-950/40 border-amber-400 text-amber-200'
                                   : 'bg-slate-800/40 border-slate-700 text-slate-300 hover:border-slate-600'
                               }`}
                             >
-                              <div className="flex items-center gap-2 truncate flex-1 pr-2">
-                                {isUnlocked ? (
-                                  <Unlock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                                ) : (
-                                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                )}
-                                <span className="truncate font-semibold">{p.title}</span>
-                                {isFull && (
-                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                                    마감
+                              <div className="flex justify-between items-center gap-2">
+                                <div className="flex items-center gap-2 truncate flex-1 pr-2">
+                                  {isUnlocked ? (
+                                    <Unlock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                  ) : (
+                                    <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  )}
+                                  <span className="truncate font-semibold">{p.title}</span>
+                                  {isTimeClosed ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40 shrink-0">
+                                      🏁 투표 마감 · 개표 완료
+                                    </span>
+                                  ) : isFull ? (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 shrink-0">
+                                      마감
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                  <span className="text-[10px] text-emerald-300 font-bold">
+                                    🟢 {liveCount}명
                                   </span>
-                                )}
-                              </div>
+                                  <span className="text-[10px] text-sky-300 font-bold">
+                                    🗳️ {totalVotes}명
+                                  </span>
+                                  <span className="text-[10px] text-amber-300/80">
+                                    {remainingStr}
+                                  </span>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-[10px] text-amber-300/80">
-                                  {remainingStr}
-                                </span>
-                                <span className="text-[10px] text-slate-400">
-                                  {totalVotes}/{maxCap}명
-                                </span>
-
-                                {/* Creator Admin Action Buttons */}
-                                {p.isCustom && (
-                                  <div className="flex items-center gap-1">
+                                  {onOpenResultsDirect && isUnlocked && (
                                     <button
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         sounds.playClick();
-                                        setAdminAuthModal({ type: 'edit', poll: p });
-                                        setAdminPinInput('');
-                                        setAdminPinError(null);
+                                        onOpenResultsDirect(p);
                                       }}
-                                      title="개설자 관리 비밀번호로 수정"
-                                      className="p-1 rounded bg-slate-700 hover:bg-sky-600 text-slate-300 hover:text-white transition"
+                                      className="px-1.5 py-0.5 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold transition cursor-pointer"
                                     >
-                                      <Pencil className="w-3 h-3" />
+                                      결과보기
                                     </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        sounds.playClick();
-                                        setAdminAuthModal({ type: 'delete', poll: p });
-                                        setAdminPinInput('');
-                                        setAdminPinError(null);
-                                      }}
-                                      title="개설자 관리 비밀번호로 삭제"
-                                      className="p-1 rounded bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white transition"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </button>
-                                  </div>
-                                )}
+                                  )}
+
+                                  {/* Creator Admin Action Buttons */}
+                                  {p.isCustom && (
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          sounds.playClick();
+                                          setAdminAuthModal({ type: 'edit', poll: p });
+                                          setAdminPinInput('');
+                                          setAdminPinError(null);
+                                        }}
+                                        title="개설자 관리 비밀번호로 수정"
+                                        className="p-1 rounded bg-slate-700 hover:bg-sky-600 text-slate-300 hover:text-white transition"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          sounds.playClick();
+                                          setAdminAuthModal({ type: 'delete', poll: p });
+                                          setAdminPinInput('');
+                                          setAdminPinError(null);
+                                        }}
+                                        title="개설자 관리 비밀번호로 삭제"
+                                        className="p-1 rounded bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white transition"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+
+                              {isTimeClosed && isUnlocked && (
+                                <div className="mt-1.5 px-2 py-1 rounded bg-slate-900/80 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold truncate">
+                                  🏆 {winnerSummary.summaryText} ({totalVotes}/{maxCap}명 참여)
+                                </div>
+                              )}
                             </div>
                           );
                         })
@@ -1048,23 +1183,26 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                 </div>
               </div>
 
-              {/* 3. Duration / Timer Selection (5 Steps: 1h, 3h, 6h, 12h, 24h) */}
+              {/* 3. Duration / Timer Selection (1m test, 3m, 1h, 1d, 7d) */}
               <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>투표소 유지 시간 (만료 시 자동 삭제)</span>
+                    <span>투표 마감 시간 설정</span>
                   </label>
-                  <span className="text-xs font-bold text-amber-400">{selectedDurationHours}시간</span>
+                  <span className="text-xs font-bold text-amber-400">
+                    {DURATION_OPTIONS.find((d) => Math.abs(d.hours - selectedDurationHours) < 0.001)?.display ||
+                      `${selectedDurationHours}시간 후 마감`}
+                  </span>
                 </div>
-                <div className="grid grid-cols-5 gap-1.5 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-1">
                   {DURATION_OPTIONS.map((opt) => (
                     <button
-                      key={opt.hours}
+                      key={opt.label}
                       type="button"
                       onClick={() => setSelectedDurationHours(opt.hours)}
-                      className={`py-1 rounded text-center text-xs font-bold transition cursor-pointer border ${
-                        selectedDurationHours === opt.hours
+                      className={`py-1.5 px-1 rounded text-center text-[11px] font-bold transition cursor-pointer border ${
+                        Math.abs(selectedDurationHours - opt.hours) < 0.001
                           ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
                           : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
                       }`}
@@ -1074,7 +1212,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                   ))}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  설정한 시간이 지나면 투표소가 자동으로 마감 및 삭제되어 목록에서 정리됩니다.
+                  설정한 시간이 지나면 투표가 자동 마감되며, 로비에서 최종 개표 결과를 바로 확인할 수 있습니다.
                 </p>
               </div>
 
@@ -1260,12 +1398,18 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
         <button
           type="button"
           onClick={handleFinalEnter}
-          className="w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold text-sm sm:text-base shadow-xl shadow-blue-500/25 active:scale-[0.98] transition cursor-pointer"
+          className={`w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl text-white font-bold text-sm sm:text-base shadow-xl active:scale-[0.98] transition cursor-pointer ${
+            isPollExpired(selectedPoll)
+              ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-sky-600 hover:from-emerald-500 hover:to-sky-500 shadow-emerald-500/25'
+              : 'bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 shadow-blue-500/25'
+          }`}
         >
           <Sparkles className="w-5 h-5 text-amber-300" />
           <span>
             {isSelectedPrivateLocked
               ? '비공개 투표소 입장 (4자리 코드 필요 🔒)'
+              : isPollExpired(selectedPoll)
+              ? '개표 참관 모드로 입장하기 🏁'
               : isSelectedPollFull
               ? '투표소 입장하기 (정원 마감: 결과 열람 모드)'
               : '선택한 투표소 입장하기'}
@@ -1274,13 +1418,14 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
         </button>
 
         {/* Selected Poll indicator footer */}
-        <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 px-1">
+        <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 px-1 gap-2">
           <div className="flex items-center gap-1.5 truncate">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span className="truncate">
               입장 안건: <strong className="text-slate-200">{selectedPoll.title}</strong>
               <span className="ml-1.5 text-emerald-400 font-semibold">
-                ({selectedPoll.isOfficial ? selectedPollChannelLabel : `${selectedPollDisplayTotal} / ${selectedPollCapacity}명`})
+                (🟢 현재 접속 {livePresenceCounts[selectedPoll.id] || 0}명 · 🗳️ 누적 {selectedPollDisplayTotal}명
+                {!selectedPoll.isOfficial ? ` / ${selectedPollCapacity}명` : ''})
               </span>
               {selectedPoll.category === 'private' && (
                 <span className={`ml-1 font-bold ${isSelectedPrivateLocked ? 'text-amber-400' : 'text-emerald-400'}`}>

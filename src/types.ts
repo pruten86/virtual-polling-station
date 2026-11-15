@@ -35,6 +35,7 @@ export interface PollStation {
   durationHours?: number; // selected duration in hours
   activeChannelIndex?: number; // current open channel (1, 2, 3...)
   adminPin?: string; // 4-digit creator management PIN
+  ownerId?: string; // creator userId / voter UUID
 }
 
 export interface PollingStationState {

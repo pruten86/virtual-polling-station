@@ -11,6 +11,8 @@ import {
   getAllPolls,
   getPollTallies,
   generateRandomNickname,
+  isPollExpired,
+  getPollWinnerSummary,
 } from './data/presetPolls';
 import {
   ensureAnonymousAuth,
@@ -20,6 +22,11 @@ import {
   castVote,
   subscribePollRealtime,
   subscribeAllPollsRealtime,
+  subscribePollsMetaRealtime,
+  closePollNow,
+  isPollOwnerOrAdmin,
+  isProtectedOfficialPoll,
+  joinLobbyIndexTracker,
   checkHasVotedVoteverse,
   fetchPollTalliesFromDB,
   joinMultiplayerRoom,
@@ -209,6 +216,8 @@ export default function App() {
   const [isResultsOpen, setIsResultsOpen] = useState<boolean>(false);
   const [isCertificateOpen, setIsCertificateOpen] = useState<boolean>(false);
   const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
+  const [lobbyResultsPoll, setLobbyResultsPoll] = useState<PollStation | null>(null);
+  const [nowTs, setNowTs] = useState<number>(() => Date.now());
 
   // Interaction & Nearby Detection
   const [activeZoneNear, setActiveZoneNear] = useState<StationZone | null>(null);
@@ -335,7 +344,15 @@ export default function App() {
     };
   }, []);
 
-  // Global Realtime subscription for all poll_options across every poll (keeps Lobby & active poll synchronized)
+  // 1-second timer so short 1-min / 3-min polls automatically transition to closed observer mode in real time
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Global Realtime subscription for all poll_options & poll close events
   useEffect(() => {
     const unsubscribeAll = subscribeAllPollsRealtime(({ pollId, optionId, votes }) => {
       setAllPolls((prevPolls) =>
@@ -372,8 +389,18 @@ export default function App() {
       }
     });
 
+    const unsubscribeMeta = subscribePollsMetaRealtime((pollId, expiresAt) => {
+      setAllPolls((prevPolls) =>
+        prevPolls.map((p) => (p.id === pollId ? { ...p, expiresAt } : p))
+      );
+      if (pollId === currentPollRef.current.id) {
+        setCurrentPoll((prev) => (prev.id === pollId ? { ...prev, expiresAt } : prev));
+      }
+    });
+
     return () => {
       unsubscribeAll();
+      unsubscribeMeta();
     };
   }, []);
 
@@ -722,16 +749,76 @@ export default function App() {
     };
   }, [currentPoll?.id, hasEntered, isLobbyOpen, multiplayerPeerId]);
 
+  // Track active station membership in global Lobby Presence index while inside a polling station
+  useEffect(() => {
+    if (!hasEntered || isLobbyOpen || !currentPoll?.id) return;
+    const stopTracking = joinLobbyIndexTracker(multiplayerPeerId, currentPoll.id);
+    return () => {
+      stopTracking();
+    };
+  }, [hasEntered, isLobbyOpen, currentPoll?.id, multiplayerPeerId]);
+
   const totalVotes = candidates.reduce((s, c) => s + c.votes, 0);
   const maxCapacity = currentPoll.maxVoters || 100;
   // Official polls never reach capacity lock because they auto-expand
   const isCapacityReached = !currentPoll.isOfficial && totalVotes >= maxCapacity;
+  const isCurrentPollClosed = Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
+  const canCloseCurrentPoll = isPollOwnerOrAdmin(currentPoll, authUserId);
+  const currentWinnerSummary = getPollWinnerSummary(candidates);
+
+  // Immediately close a poll (strictly restricted to custom poll creator/admin; never official preset polls)
+  const handleClosePollNow = useCallback(
+    async (targetPoll?: PollStation) => {
+      const pollToClose = targetPoll || currentPollRef.current;
+
+      if (isProtectedOfficialPoll(pollToClose)) {
+        sounds.playWarning();
+        showToast('기본 공식 투표소는 상시 체험 공간이므로 수동으로 마감할 수 없습니다.');
+        return;
+      }
+
+      if (!isPollOwnerOrAdmin(pollToClose, authUserId)) {
+        sounds.playWarning();
+        showToast('개설자(방장)만 이 투표소를 즉시 마감할 수 있습니다.');
+        return;
+      }
+
+      const res = await closePollNow(pollToClose.id, pollToClose);
+      if (!res.success) {
+        sounds.playWarning();
+        showToast(res.error || '투표 마감 권한이 없습니다.');
+        return;
+      }
+
+      setAllPolls((prev) =>
+        prev.map((p) => (p.id === pollToClose.id ? { ...p, expiresAt: res.expiresAt } : p))
+      );
+      if (pollToClose.id === currentPollRef.current.id) {
+        setCurrentPoll((prev) => ({ ...prev, expiresAt: res.expiresAt }));
+        setIsSignatureOpen(false);
+        setIsBallotPaperOpen(false);
+      }
+      setLobbyResultsPoll((prev) =>
+        prev && prev.id === pollToClose.id ? { ...prev, expiresAt: res.expiresAt } : prev
+      );
+      setNowTs(Date.now());
+      sounds.playChime();
+      showToast(`🏁 [${pollToClose.title}] 투표가 마감되어 개표가 확정되었습니다!`);
+    },
+    [showToast, authUserId]
+  );
 
   // Alias for digital certificate modal visibility
   const setShowCertificate = setIsCertificateOpen;
 
   // 3. 투표함(Zone 3)에 용지를 넣는 handleCastBallot 함수
   const handleCastBallot = useCallback(async () => {
+    if (isPollExpired(currentPoll)) {
+      sounds.playWarning();
+      showToast('🏁 투표가 마감되어 더 이상 투표할 수 없습니다. 4번 개표 전광판에서 최종 결과를 확인하세요!');
+      return;
+    }
+
     if (isCastingRef.current || hasVotedRef.current) {
       if (hasVotedRef.current) {
         showToast('이미 소중한 한 표를 행사하셨습니다. 4번 개표 전광판을 확인하세요!');
@@ -846,6 +933,20 @@ export default function App() {
       return;
     }
 
+    // If poll time has expired: Observer Mode (allow billboard & exit, block voting steps)
+    if (isCurrentPollClosed) {
+      if (activeZoneNear === 'billboard') {
+        sounds.playClick();
+        setIsResultsOpen(true);
+      } else if (activeZoneNear) {
+        sounds.playClick();
+        showToast(
+          '🏁 투표가 마감되어 개표 참관 모드로 운영 중입니다. 4번 개표 전광판에서 최종 결과를 확인하세요!'
+        );
+      }
+      return;
+    }
+
     // If custom poll has reached its max capacity and user hasn't voted yet, lock voting
     if (isCapacityReached && !hasVoted) {
       if (activeZoneNear === 'billboard') {
@@ -890,7 +991,7 @@ export default function App() {
       sounds.playClick();
       setIsResultsOpen(true);
     }
-  }, [hasEntered, isLobbyOpen, activeZoneNear, hasBallot, hasStamped, hasVoted, isCapacityReached, maxCapacity, showToast, handleCastBallot]);
+  }, [hasEntered, isLobbyOpen, activeZoneNear, isCurrentPollClosed, hasBallot, hasStamped, hasVoted, isCapacityReached, maxCapacity, showToast, handleCastBallot]);
 
   // Keyboard input listeners
   useEffect(() => {
@@ -1404,10 +1505,15 @@ export default function App() {
       lastBroadcastPosRef.current = { x: spawnPos.x, z: spawnPos.z, rotY: Math.PI };
     }
 
+    setLobbyResultsPoll(null);
     setHasEntered(true);
     setIsLobbyOpen(false);
 
-    showToast(`[${selectedPoll.title}] 투표소에 입장했습니다! 1번 교부대로 이동하세요.`);
+    if (isPollExpired(selectedPoll)) {
+      showToast(`🏁 [${selectedPoll.title}] 투표가 마감되어 개표 참관 모드로 입장했습니다!`);
+    } else {
+      showToast(`[${selectedPoll.title}] 투표소에 입장했습니다! 1번 교부대로 이동하세요.`);
+    }
   };
 
   // Step 1: Complete Signature
@@ -1483,9 +1589,62 @@ export default function App() {
           initialPollId={currentPoll.id}
           externalPolls={allPolls}
           onPollsUpdated={handlePollsUpdated}
+          onOpenResultsDirect={(poll) => {
+            setLobbyResultsPoll(poll);
+            fetchPollTalliesFromDB(poll.id, poll.candidates).then((fresh) => {
+              if (!fresh) return;
+              setAllPolls((prev) =>
+                prev.map((p) => (p.id === poll.id ? { ...p, candidates: fresh } : p))
+              );
+              setLobbyResultsPoll((prev) =>
+                prev && prev.id === poll.id ? { ...prev, candidates: fresh } : prev
+              );
+            });
+          }}
           onEnter={handleEnterWorld}
         />
       )}
+
+      {/* 1-B. Direct Results Modal opened from Lobby Card */}
+      {lobbyResultsPoll && (() => {
+        const syncedLobbyPoll =
+          allPolls.find((p) => p.id === lobbyResultsPoll.id) || lobbyResultsPoll;
+        const isLobbyPollClosed = Boolean(
+          syncedLobbyPoll.expiresAt && syncedLobbyPoll.expiresAt <= nowTs
+        );
+        const canCloseLobbyPoll = isPollOwnerOrAdmin(syncedLobbyPoll, authUserId);
+        const lobbyChannelState = syncedLobbyPoll.isOfficial
+          ? buildOfficialChannelState(syncedLobbyPoll.candidates)
+          : null;
+
+        return (
+          <ResultsModal
+            candidates={syncedLobbyPoll.candidates}
+            pollTitle={syncedLobbyPoll.title}
+            pollId={syncedLobbyPoll.id}
+            nickname={nickname}
+            maxVoters={syncedLobbyPoll.maxVoters || 100}
+            userVoteId={null}
+            isClosed={isLobbyPollClosed}
+            canClosePoll={canCloseLobbyPoll}
+            isLobbyDirectView
+            onClosePollNow={
+              canCloseLobbyPoll ? () => handleClosePollNow(syncedLobbyPoll) : undefined
+            }
+            isOfficial={syncedLobbyPoll.isOfficial}
+            allChannels={lobbyChannelState?.allChannels || []}
+            activeChannelIndex={lobbyChannelState?.activeChannelIndex || 1}
+            onRealtimeCandidateUpdate={(updated) => {
+              setAllPolls((prev) =>
+                prev.map((p) =>
+                  p.id === syncedLobbyPoll.id ? { ...p, candidates: updated } : p
+                )
+              );
+            }}
+            onClose={() => setLobbyResultsPoll(null)}
+          />
+        );
+      })()}
 
       {/* 2. HUD & Step Pipeline Overlay */}
       {hasEntered && !isLobbyOpen && (
@@ -1494,6 +1653,10 @@ export default function App() {
           activeZoneNear={activeZoneNear}
           onInteract={handleInteract}
           hasVoted={hasVoted}
+          isClosed={isCurrentPollClosed}
+          canClosePoll={canCloseCurrentPoll}
+          winnerSummaryText={currentWinnerSummary.summaryText}
+          onClosePollNow={canCloseCurrentPoll ? () => handleClosePollNow(currentPoll) : undefined}
           onOpenCertificate={() => {
             sounds.playClick();
             setIsCertificateOpen(true);
@@ -1559,6 +1722,9 @@ export default function App() {
           nickname={nickname}
           maxVoters={maxCapacity}
           userVoteId={userVoteId}
+          isClosed={isCurrentPollClosed}
+          canClosePoll={canCloseCurrentPoll}
+          onClosePollNow={canCloseCurrentPoll ? () => handleClosePollNow(currentPoll) : undefined}
           isOfficial={currentPoll.isOfficial}
           allChannels={officialChannelState.allChannels}
           activeChannelIndex={officialChannelState.activeChannelIndex}

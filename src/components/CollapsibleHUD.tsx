@@ -13,6 +13,8 @@ import {
   Keyboard,
   Vote,
   Layers,
+  TimerOff,
+  BarChart3,
 } from 'lucide-react';
 
 interface CollapsibleHUDProps {
@@ -20,6 +22,10 @@ interface CollapsibleHUDProps {
   activeZoneNear: StationZone | null;
   onInteract: () => void;
   hasVoted: boolean;
+  isClosed?: boolean;
+  canClosePoll?: boolean;
+  winnerSummaryText?: string;
+  onClosePollNow?: () => void | Promise<void>;
   onOpenCertificate: () => void;
   onOpenResults: () => void;
   onReset: () => void;
@@ -42,6 +48,10 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   activeZoneNear,
   onInteract,
   hasVoted,
+  isClosed = false,
+  canClosePoll = false,
+  winnerSummaryText = '',
+  onClosePollNow,
   onOpenCertificate,
   onOpenResults,
   onReset,
@@ -75,25 +85,28 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   const getPromptLabel = () => {
     switch (activeZoneNear) {
       case 'desk':
+        if (isClosed) return '🏁 투표 마감 (개표 참관 모드)';
         return hasVoted
           ? '1번 교부대 (투표 완료)'
           : currentStep === 1
           ? '본인 확인 서명하기'
           : '교부대 안내 확인';
       case 'booth':
+        if (isClosed) return '🏁 투표 마감 (개표 참관 모드)';
         return hasVoted
           ? '2번 기표소 (투표 완료)'
           : currentStep === 2
           ? '기표소 입장 및 투표하기'
           : '기표소 살펴보기';
       case 'box':
+        if (isClosed) return '🏁 투표 마감 · 4번 전광판에서 결과 확인';
         return hasVoted
           ? '✅ 투표 완료! 전광판 · 출구로 이동하세요'
           : currentStep === 3
           ? '투표함에 용지 넣기'
           : '투표함 살펴보기';
       case 'billboard':
-        return '📊 개표 전광판 & 방명록 열기';
+        return isClosed ? '📊 최종 개표 결과 & 방명록 열기' : '📊 개표 전광판 & 방명록 열기';
       case 'exit':
         return '🚪 출구로 나가기 (다른 투표소 이동)';
       default:
@@ -228,6 +241,31 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Closed / Observer Mode Summary Banner */}
+          {isClosed && (
+            <div className="mt-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-emerald-950/80 border border-rose-500/40 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0">
+                  🏁 투표 마감 · 개표 참관 모드
+                </span>
+                <span className="text-emerald-300 font-bold truncate">
+                  {winnerSummaryText || '개표 완료'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onOpenResults();
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>최종 개표결과 보기</span>
+              </button>
+            </div>
+          )}
 
           {/* 4-Step Process Pipeline: Shown when !isTopCollapsed */}
           {!isTopCollapsed && (
@@ -407,7 +445,24 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
               </div>
 
               {/* Right dock controls */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                {/* Immediate Close Test Button (Strictly Creator / Admin Only) */}
+                {canClosePoll && !isClosed && onClosePollNow && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      onClosePollNow();
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/35 border border-rose-500/40 text-rose-200 hover:text-white text-[11px] sm:text-xs font-bold transition cursor-pointer whitespace-nowrap"
+                    title="개설자 권한으로 즉시 투표 마감 및 개표 확정"
+                  >
+                    <TimerOff className="w-3.5 h-3.5 shrink-0 text-rose-300" />
+                    <span className="sm:hidden">즉시 마감</span>
+                    <span className="hidden sm:inline">즉시 투표 마감</span>
+                  </button>
+                )}
+
                 {/* Audio Toggle */}
                 <button
                   type="button"
@@ -423,15 +478,17 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                 </button>
 
                 {/* Reset / Re-vote button */}
-                <button
-                  type="button"
-                  onClick={onReset}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap"
-                  title="현재 투표소 재투표하기"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-                  <span>재투표하기</span>
-                </button>
+                {!isClosed && (
+                  <button
+                    type="button"
+                    onClick={onReset}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+                    title="현재 투표소 재투표하기"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                    <span>재투표하기</span>
+                  </button>
+                )}
               </div>
             </div>
           )}

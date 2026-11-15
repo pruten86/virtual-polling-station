@@ -163,75 +163,104 @@ function createSignTexture(title: string, sub: string, bgColor = '#0284c7'): THR
   return texture;
 }
 
-// Procedural Korean Flag (Taegeukgi)
+// Procedural Korean Flag (Taegeukgi) following exact National Flag Act (국기법) proportions
 function createKoreanFlagTexture(): THREE.CanvasTexture {
+  const width = 900;
+  const height = 600;
   const canvas = document.createElement('canvas');
-  canvas.width = 600;
-  canvas.height = 400;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d')!;
 
+  // White background + subtle frame border for crisp contrast on off-white wall
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, 600, 400);
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, width - 4, height - 4);
 
-  // Taegeuk Circle in Center
-  const cx = 300;
-  const cy = 200;
-  const r = 80;
+  const cx = width / 2; // 450
+  const cy = height / 2; // 300
+  const D = height / 2; // 300 (Taegeuk diameter = 1/2 height)
+  const R = D / 2; // 150 (Taegeuk radius)
+  const alpha = Math.atan2(2, 3); // Exact diagonal angle (~33.69 deg)
 
-  // Red upper hemisphere
-  ctx.fillStyle = '#cd2e3a';
+  // 1. Red upper half-circle (clockwise in Canvas 2D from top-left Math.PI+alpha to bottom-right alpha)
+  ctx.fillStyle = '#CD2E3A';
   ctx.beginPath();
-  ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2);
-  ctx.arc(cx, cy - r / 2, r / 2, Math.PI / 2, -Math.PI / 2, true);
-  ctx.arc(cx, cy + r / 2, r / 2, Math.PI / 2, -Math.PI / 2, false);
+  ctx.arc(cx, cy, R, Math.PI + alpha, alpha, false);
+  ctx.closePath();
   ctx.fill();
 
-  // Blue lower hemisphere
-  ctx.fillStyle = '#0047a0';
+  // 2. Blue lower half-circle (clockwise in Canvas 2D from bottom-right alpha to top-left Math.PI+alpha)
+  ctx.fillStyle = '#0047A0';
   ctx.beginPath();
-  ctx.arc(cx, cy, r, Math.PI / 2, -Math.PI / 2);
-  ctx.arc(cx, cy - r / 2, r / 2, -Math.PI / 2, Math.PI / 2, false);
-  ctx.arc(cx, cy + r / 2, r / 2, -Math.PI / 2, Math.PI / 2, true);
+  ctx.arc(cx, cy, R, alpha, Math.PI + alpha, false);
+  ctx.closePath();
   ctx.fill();
 
-  // 4 Trigrams (Geon, Gon, Gam, Ri) represented cleanly
-  ctx.fillStyle = '#111827';
-  const drawBar = (x: number, y: number, angle: number, isBroken: boolean) => {
+  // 3. Top-left small Red circle (Geon direction bulge)
+  ctx.fillStyle = '#CD2E3A';
+  ctx.beginPath();
+  ctx.arc(
+    cx - (R / 2) * Math.cos(alpha),
+    cy - (R / 2) * Math.sin(alpha),
+    R / 2,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+
+  // 4. Bottom-right small Blue circle (Gon direction bulge)
+  ctx.fillStyle = '#0047A0';
+  ctx.beginPath();
+  ctx.arc(
+    cx + (R / 2) * Math.cos(alpha),
+    cy + (R / 2) * Math.sin(alpha),
+    R / 2,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+
+  // 5. Four Trigrams (건곤감리) - #000000
+  // Distance from center to inner bar edge = 1.5 * R
+  // Bar length = R, thickness = R / 6, gap between bars = R / 12, broken bar center gap = R / 12
+  const drawTrigram = (theta: number, bars: [number, number, number]) => {
+    const startX = 1.5 * R;
+    const barLength = R;
+    const barThickness = R / 6;
+    const barGap = R / 12;
+    const barStep = barThickness + barGap; // R / 4
+    const centerGap = R / 12;
+    const halfLen = (barLength - centerGap) / 2;
+
     ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    if (!isBroken) {
-      ctx.fillRect(-28, -4, 56, 8);
-    } else {
-      ctx.fillRect(-28, -4, 25, 8);
-      ctx.fillRect(3, -4, 25, 8);
-    }
+    ctx.translate(cx, cy);
+    ctx.rotate(theta);
+    ctx.fillStyle = '#000000';
+
+    bars.forEach((isSolid, i) => {
+      const x = startX + i * barStep;
+      if (isSolid === 1) {
+        ctx.fillRect(x, -barLength / 2, barThickness, barLength);
+      } else {
+        ctx.fillRect(x, -barLength / 2, barThickness, halfLen);
+        ctx.fillRect(x, centerGap / 2, barThickness, halfLen);
+      }
+    });
+
     ctx.restore();
   };
 
-  // Top Left (Geon: 3 solid)
-  const angleTL = -Math.PI / 4;
-  drawBar(170, 90, angleTL, false);
-  drawBar(180, 100, angleTL, false);
-  drawBar(190, 110, angleTL, false);
-
-  // Bottom Right (Gon: 3 broken)
-  const angleBR = -Math.PI / 4;
-  drawBar(410, 290, angleBR, true);
-  drawBar(420, 300, angleBR, true);
-  drawBar(430, 310, angleBR, true);
-
-  // Top Right (Gam: broken, solid, broken)
-  const angleTR = Math.PI / 4;
-  drawBar(430, 90, angleTR, true);
-  drawBar(420, 100, angleTR, false);
-  drawBar(410, 110, angleTR, true);
-
-  // Bottom Left (Ri: solid, broken, solid)
-  const angleBL = Math.PI / 4;
-  drawBar(190, 290, angleBL, false);
-  drawBar(180, 300, angleBL, true);
-  drawBar(170, 310, angleBL, false);
+  // Top-Left: 건 (乾, 3 solid)
+  drawTrigram(Math.PI + alpha, [1, 1, 1]);
+  // Bottom-Right: 곤 (坤, 3 broken)
+  drawTrigram(alpha, [0, 0, 0]);
+  // Top-Right: 감 (坎, broken - solid - broken)
+  drawTrigram(-alpha, [0, 1, 0]);
+  // Bottom-Left: 리 (離, solid - broken - solid)
+  drawTrigram(Math.PI - alpha, [1, 0, 1]);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

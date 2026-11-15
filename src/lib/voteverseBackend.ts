@@ -26,9 +26,120 @@ import {
   PRESET_POLLS,
   getAllPolls,
   savePoll,
+  getClosedPollOverrides,
+  setClosedPollOverride,
 } from '../data/presetPolls';
 
 const STORAGE_KEY_VOTED_PREFIX = 'vps_user_voted_';
+const OWNED_POLLS_STORAGE_KEY = 'voteverse_owned_polls';
+const ADMIN_UNLOCKED_POLLS_KEY = 'voteverse_admin_unlocked_polls';
+
+export const OFFICIAL_PRESET_POLL_IDS = new Set([
+  'poll-lunch',
+  'poll-monday11',
+  'poll-dinner',
+]);
+
+export function isProtectedOfficialPoll(
+  poll?: Pick<PollStation, 'id' | 'isOfficial'> | null
+): boolean {
+  if (!poll) return false;
+  return Boolean(poll.isOfficial) || OFFICIAL_PRESET_POLL_IDS.has(poll.id);
+}
+
+export function getOwnedPollsMap(): Record<string, { ownerId: string; createdAt: number }> {
+  try {
+    const raw = localStorage.getItem(OWNED_POLLS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const map: Record<string, { ownerId: string; createdAt: number }> = {};
+      parsed.forEach((id) => {
+        if (typeof id === 'string' && id) {
+          map[id] = { ownerId: getVoterUUID(), createdAt: Date.now() };
+        }
+      });
+      return map;
+    }
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+export function recordOwnedPoll(pollId: string, ownerId?: string | null): void {
+  if (!pollId || OFFICIAL_PRESET_POLL_IDS.has(pollId)) return;
+  try {
+    const map = getOwnedPollsMap();
+    map[pollId] = {
+      ownerId: ownerId || getVoterUUID(),
+      createdAt: Date.now(),
+    };
+    localStorage.setItem(OWNED_POLLS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+export function unlockPollAdminSession(pollId: string): void {
+  if (!pollId || OFFICIAL_PRESET_POLL_IDS.has(pollId)) return;
+  try {
+    const raw = sessionStorage.getItem(ADMIN_UNLOCKED_POLLS_KEY);
+    const prev: string[] = raw ? JSON.parse(raw) : [];
+    const next = Array.isArray(prev) ? Array.from(new Set([...prev, pollId])) : [pollId];
+    sessionStorage.setItem(ADMIN_UNLOCKED_POLLS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+export function isPollAdminUnlocked(pollId: string): boolean {
+  if (!pollId || OFFICIAL_PRESET_POLL_IDS.has(pollId)) return false;
+  try {
+    const raw = sessionStorage.getItem(ADMIN_UNLOCKED_POLLS_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.includes(pollId);
+  } catch {
+    return false;
+  }
+}
+
+export function isPollOwnerOrAdmin(
+  poll?: PollStation | null,
+  currentAuthUserId?: string | null
+): boolean {
+  if (!poll || isProtectedOfficialPoll(poll)) {
+    return false;
+  }
+
+  // 1. Local creator registry check (voteverse_owned_polls)
+  const ownedMap = getOwnedPollsMap();
+  if (ownedMap[poll.id]) {
+    return true;
+  }
+
+  // 2. DB / object ownerId check against auth UID or persistent browser UUID
+  if (poll.ownerId) {
+    const browserUuid = getVoterUUID();
+    if (
+      (currentAuthUserId && poll.ownerId === currentAuthUserId) ||
+      (browserUuid && poll.ownerId === browserUuid)
+    ) {
+      return true;
+    }
+  }
+
+  // 3. Session admin PIN unlock check
+  if (isPollAdminUnlocked(poll.id)) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * 1. Initialize anonymous user session on app loading
@@ -57,7 +168,7 @@ export async function ensurePollAndOptionsExist(poll: PollStation): Promise<void
             description: poll.description || '',
             category: poll.category || 'public',
             max_voters: poll.maxVoters || 100,
-            duration_hours: poll.durationHours || 720,
+            duration_hours: Math.max(1, Math.round(poll.durationHours || 720)),
             expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
             created_at: new Date().toISOString(),
           },
@@ -124,7 +235,7 @@ export async function ensurePresetPollsSeeded(): Promise<void> {
         description: p.description,
         category: p.category || 'public',
         max_voters: p.maxVoters || 100,
-        duration_hours: p.durationHours || 720,
+        duration_hours: Math.max(1, Math.round(p.durationHours || 720)),
         expires_at: p.expiresAt ? new Date(p.expiresAt).toISOString() : null,
         created_at: new Date().toISOString(),
       }));
@@ -192,12 +303,33 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     // Ensure all 3 official preset polls & options exist in DB without overwriting vote_count
     await ensurePresetPollsSeeded();
 
-    // Fetch public/official polls using only actual DB columns (no is_official, access_code, admin_pin)
-    const { data: pollsData, error: pollsError } = await supabase
+    // Fetch public/official polls; include owner_id if column exists in DB, otherwise fallback cleanly
+    let pollsData: any[] | null = null;
+    let pollsError: any = null;
+
+    const withOwnerRes = await supabase
       .from('polls')
-      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
+      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, owner_id')
       .neq('category', 'private')
       .order('created_at', { ascending: false });
+
+    if (
+      withOwnerRes.error &&
+      ((withOwnerRes.error.message || '').includes('owner_id') ||
+        withOwnerRes.error.code === '42703' ||
+        withOwnerRes.error.code === 'PGRST204')
+    ) {
+      const baseRes = await supabase
+        .from('polls')
+        .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
+        .neq('category', 'private')
+        .order('created_at', { ascending: false });
+      pollsData = baseRes.data;
+      pollsError = baseRes.error;
+    } else {
+      pollsData = withOwnerRes.data;
+      pollsError = withOwnerRes.error;
+    }
 
     if (pollsError || !pollsData || pollsData.length === 0) {
       return localPolls;
@@ -231,6 +363,8 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     }
 
     const officialPresetIds = new Set(PRESET_POLLS.filter((p) => p.isOfficial).map((p) => p.id));
+    const closedOverrides = getClosedPollOverrides();
+    const localPollsById = new Map(localPolls.map((p) => [p.id, p]));
 
     const remotePolls: PollStation[] = pollsData.map((row: any) => {
       const candidates = (optionsMap[row.id] || []).sort(
@@ -238,6 +372,14 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       );
       const pollIdStr = String(row.id);
       const isOfficial = officialPresetIds.has(pollIdStr) || row.category === 'official';
+      const dbExpiresAt = row.expires_at ? new Date(row.expires_at).getTime() : undefined;
+      const overrideClosedAt = closedOverrides[pollIdStr];
+      const effectiveExpiresAt =
+        overrideClosedAt && (!dbExpiresAt || dbExpiresAt > overrideClosedAt)
+          ? overrideClosedAt
+          : dbExpiresAt;
+      const localMatch = localPollsById.get(pollIdStr);
+
       return {
         id: pollIdStr,
         title: row.title,
@@ -248,7 +390,10 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
         isOfficial,
         isCustom: !isOfficial,
         durationHours: Number(row.duration_hours) || 24,
-        expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : undefined,
+        expiresAt: effectiveExpiresAt,
+        ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
+        adminPin: localMatch?.adminPin,
+        accessCode: localMatch?.accessCode,
         candidates: candidates.length > 0 ? candidates : PRESET_POLLS[0].candidates,
       };
     });
@@ -259,8 +404,10 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     PRESET_POLLS.forEach((preset) => {
       if (!remoteIds.has(preset.id)) {
         const dbCands = optionsMap[preset.id];
+        const overrideClosedAt = closedOverrides[preset.id];
         merged.push({
           ...preset,
+          expiresAt: overrideClosedAt || preset.expiresAt,
           candidates: dbCands && dbCands.length > 0 ? dbCands : preset.candidates,
         });
       }
@@ -269,8 +416,10 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       .filter((p) => p.category === 'private' && !remoteIds.has(p.id))
       .forEach((priv) => {
         const dbCands = optionsMap[priv.id];
+        const overrideClosedAt = closedOverrides[priv.id];
         merged.push({
           ...priv,
+          expiresAt: overrideClosedAt || priv.expiresAt,
           candidates: dbCands && dbCands.length > 0 ? dbCands : priv.candidates,
         });
       });
@@ -328,16 +477,22 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
 
   // Best-effort anonymous auth (do not block creation if anonymous auth is delayed/disabled)
   const authUserId = await ensureAnonymousAuth();
+  const resolvedOwnerId = pollData.ownerId || authUserId || getVoterUUID();
+  const pollWithOwner: PollStation = {
+    ...pollData,
+    ownerId: resolvedOwnerId,
+  };
 
   const p_poll_payload: Record<string, any> = {
-    id: pollData.id,
-    title: pollData.title,
-    description: pollData.description,
-    category: pollData.category || 'public',
-    max_voters: pollData.maxVoters,
-    duration_hours: pollData.durationHours || 24,
-    expires_at: pollData.expiresAt ? new Date(pollData.expiresAt).toISOString() : null,
-    candidates: pollData.candidates.map((c) => ({
+    id: pollWithOwner.id,
+    title: pollWithOwner.title,
+    description: pollWithOwner.description,
+    category: pollWithOwner.category || 'public',
+    max_voters: pollWithOwner.maxVoters,
+    duration_hours: Math.max(1, Math.round(pollWithOwner.durationHours || 24)),
+    expires_at: pollWithOwner.expiresAt ? new Date(pollWithOwner.expiresAt).toISOString() : null,
+    owner_id: resolvedOwnerId,
+    candidates: pollWithOwner.candidates.map((c) => ({
       id: c.id,
       symbol_number: c.symbolNumber,
       sort_order: c.symbolNumber,
@@ -350,11 +505,11 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
     })),
   };
 
-  if (pollData.accessCode) {
-    p_poll_payload.access_code = pollData.accessCode;
+  if (pollWithOwner.accessCode) {
+    p_poll_payload.access_code = pollWithOwner.accessCode;
   }
-  if (pollData.adminPin) {
-    p_poll_payload.admin_pin = pollData.adminPin;
+  if (pollWithOwner.adminPin) {
+    p_poll_payload.admin_pin = pollWithOwner.adminPin;
   }
 
   try {
@@ -365,7 +520,8 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
       });
       if (!error) {
         console.log('[create_voteverse_poll RPC success]', data);
-        savePoll(pollData);
+        recordOwnedPoll(pollWithOwner.id, resolvedOwnerId);
+        savePoll(pollWithOwner);
         return { success: true };
       }
       rpcError = error;
@@ -380,26 +536,34 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
       rpcMsg.includes('auth');
 
     if (canFallbackDirect) {
-      const { error: pollError } = await supabase.from('polls').upsert([
-        {
-          id: pollData.id,
-          title: pollData.title,
-          description: pollData.description,
-          category: pollData.category,
-          max_voters: pollData.maxVoters,
-          duration_hours: pollData.durationHours || 24,
-          expires_at: pollData.expiresAt ? new Date(pollData.expiresAt).toISOString() : null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      const baseRow: Record<string, any> = {
+        id: pollWithOwner.id,
+        title: pollWithOwner.title,
+        description: pollWithOwner.description,
+        category: pollWithOwner.category,
+        max_voters: pollWithOwner.maxVoters,
+        duration_hours: Math.max(1, Math.round(pollWithOwner.durationHours || 24)),
+        expires_at: pollWithOwner.expiresAt ? new Date(pollWithOwner.expiresAt).toISOString() : null,
+        created_at: new Date().toISOString(),
+      };
+
+      let pollError = (await supabase.from('polls').upsert([{ ...baseRow, owner_id: resolvedOwnerId }])).error;
+      if (
+        pollError &&
+        ((pollError.message || '').includes('owner_id') ||
+          pollError.code === '42703' ||
+          pollError.code === 'PGRST204')
+      ) {
+        pollError = (await supabase.from('polls').upsert([baseRow])).error;
+      }
 
       if (pollError) {
         return { success: false, error: `투표소 DB 저장 실패: ${pollError.message}` };
       }
 
-      const optionRows = pollData.candidates.map((c) => ({
+      const optionRows = pollWithOwner.candidates.map((c) => ({
         id: c.id,
-        poll_id: pollData.id,
+        poll_id: pollWithOwner.id,
         symbol_number: c.symbolNumber,
         sort_order: c.symbolNumber,
         party: c.party,
@@ -415,7 +579,8 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
         return { success: false, error: `후보자 DB 저장 실패: ${optError.message}` };
       }
 
-      savePoll(pollData);
+      recordOwnedPoll(pollWithOwner.id, resolvedOwnerId);
+      savePoll(pollWithOwner);
       return { success: true };
     }
 
@@ -1526,5 +1691,299 @@ export function subscribeGuestbookRealtime(
     supabase?.removeChannel(channel);
   };
 }
+
+/**
+ * ---------------------------------------------------------------------------
+ * Immediate Poll Close & Realtime Poll Metadata Sync
+ * ---------------------------------------------------------------------------
+ */
+export async function closePollNow(
+  pollId: string,
+  pollData?: PollStation,
+  options?: { adminPin?: string }
+): Promise<{ success: boolean; expiresAt: number; dbSynced: boolean; error?: string }> {
+  // 1. Protect the 3 official preset polls unconditionally
+  if (isProtectedOfficialPoll(pollData) || OFFICIAL_PRESET_POLL_IDS.has(pollId)) {
+    return {
+      success: false,
+      expiresAt: pollData?.expiresAt || Date.now(),
+      dbSynced: false,
+      error: '기본 공식 투표소는 상시 체험 공간이므로 수동으로 마감할 수 없습니다.',
+    };
+  }
+
+  // 2. Verify creator ownership or matching admin PIN
+  const authUid = await ensureAnonymousAuth();
+  const resolvedPoll: PollStation =
+    pollData ||
+    getAllPolls().find((p) => p.id === pollId) ||
+    ({ id: pollId, title: '', description: '', category: 'public', candidates: [], createdAt: '' } as PollStation);
+
+  const pinMatched = Boolean(
+    options?.adminPin &&
+      resolvedPoll.adminPin &&
+      options.adminPin.trim() === resolvedPoll.adminPin.trim()
+  );
+  if (pinMatched) {
+    unlockPollAdminSession(pollId);
+  }
+
+  const authorized = pinMatched || isPollOwnerOrAdmin(resolvedPoll, authUid);
+  if (!authorized) {
+    return {
+      success: false,
+      expiresAt: resolvedPoll.expiresAt || Date.now(),
+      dbSynced: false,
+      error: '개설자(방장) 또는 관리자 비밀번호 인증을 거친 경우에만 투표를 마감할 수 있습니다.',
+    };
+  }
+
+  const closedAt = Date.now() - 1000;
+  const closedIso = new Date(closedAt).toISOString();
+
+  // Persist locally immediately so UI reflects closed status even offline / RLS-restricted
+  setClosedPollOverride(pollId, closedAt);
+
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: true, expiresAt: closedAt, dbSynced: false };
+  }
+
+  let dbSynced = false;
+  let errorMsg: string | undefined;
+
+  try {
+    if (pollData) {
+      await ensurePollAndOptionsExist(pollData);
+    }
+
+    const { error } = await supabase
+      .from('polls')
+      .update({ expires_at: closedIso })
+      .eq('id', pollId);
+
+    if (!error) {
+      dbSynced = true;
+    } else {
+      errorMsg = error.message;
+      console.warn('[closePollNow DB update warning]', error.message);
+    }
+
+    // Broadcast immediate close event across tabs/clients
+    const metaChannel = supabase.channel('voteverse_polls_meta_tx');
+    metaChannel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        try {
+          await metaChannel.send({
+            type: 'broadcast',
+            event: 'poll_closed',
+            payload: { pollId, expiresAt: closedAt },
+          });
+        } catch {
+          // ignore
+        } finally {
+          setTimeout(() => {
+            supabase?.removeChannel(metaChannel);
+          }, 500);
+        }
+      }
+    });
+  } catch (err: any) {
+    errorMsg = err?.message;
+    console.warn('[closePollNow exception]', err);
+  }
+
+  return { success: true, expiresAt: closedAt, dbSynced, error: errorMsg };
+}
+
+export function subscribePollsMetaRealtime(
+  onPollClosed: (pollId: string, expiresAt: number) => void
+): () => void {
+  if (!isSupabaseConfigured || !supabase) {
+    return () => {};
+  }
+
+  const dbChannel = supabase
+    .channel(`realtime_polls_meta_${Math.random().toString(36).slice(2, 7)}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'polls',
+      },
+      (payload: any) => {
+        const row = payload.new;
+        if (row?.id && row?.expires_at) {
+          const ts = new Date(row.expires_at).getTime();
+          if (Number.isFinite(ts)) {
+            onPollClosed(String(row.id), ts);
+          }
+        }
+      }
+    )
+    .subscribe();
+
+  const txChannel = supabase
+    .channel('voteverse_polls_meta_tx')
+    .on('broadcast', { event: 'poll_closed' }, ({ payload }: any) => {
+      if (payload?.pollId && Number.isFinite(Number(payload.expiresAt))) {
+        setClosedPollOverride(String(payload.pollId), Number(payload.expiresAt));
+        onPollClosed(String(payload.pollId), Number(payload.expiresAt));
+      }
+    })
+    .subscribe();
+
+  return () => {
+    supabase?.removeChannel(dbChannel);
+    supabase?.removeChannel(txChannel);
+  };
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Global Lobby Presence Index (Per-poll live concurrent visitor counts)
+ * Channel: 'voteverse_lobby_index'
+ * Managed via shared ref-counted state so mount/unmount ordering never removes an active channel.
+ * ---------------------------------------------------------------------------
+ */
+let lobbyIndexChannel: any = null;
+let lobbyIndexSubscribed = false;
+let activeTrackPayload: { userId: string; pollId: string } | null = null;
+const lobbyPresenceListeners = new Set<(counts: Record<string, number>) => void>();
+
+function computeLobbyCounts(): Record<string, number> {
+  if (!lobbyIndexChannel) return {};
+  const state = lobbyIndexChannel.presenceState();
+  const byPoll: Record<string, Set<string>> = {};
+
+  Object.entries(state).forEach(([key, items]: [string, any]) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const latest = items[items.length - 1];
+    const pid = latest?.pollId ? String(latest.pollId) : '';
+    const uid = latest?.userId ? String(latest.userId) : key;
+    if (pid && uid) {
+      if (!byPoll[pid]) {
+        byPoll[pid] = new Set<string>();
+      }
+      byPoll[pid].add(uid);
+    }
+  });
+
+  const result: Record<string, number> = {};
+  Object.entries(byPoll).forEach(([pid, set]) => {
+    result[pid] = set.size;
+  });
+  return result;
+}
+
+function notifyLobbyListeners(): void {
+  const counts = computeLobbyCounts();
+  lobbyPresenceListeners.forEach((cb) => cb(counts));
+}
+
+function ensureLobbyIndexChannel(presenceKey?: string): void {
+  if (!isSupabaseConfigured || !supabase) return;
+  if (lobbyIndexChannel) return;
+
+  lobbyIndexSubscribed = false;
+  const channel = supabase.channel('voteverse_lobby_index', {
+    config: {
+      presence: { key: presenceKey || getMultiplayerSessionId() },
+    },
+  });
+  lobbyIndexChannel = channel;
+
+  channel
+    .on('presence', { event: 'sync' }, notifyLobbyListeners)
+    .on('presence', { event: 'join' }, notifyLobbyListeners)
+    .on('presence', { event: 'leave' }, notifyLobbyListeners)
+    .subscribe(async (status: string) => {
+      if (status === 'SUBSCRIBED') {
+        lobbyIndexSubscribed = true;
+        if (activeTrackPayload) {
+          try {
+            await channel.track({
+              userId: activeTrackPayload.userId,
+              pollId: activeTrackPayload.pollId,
+              joinedAt: Date.now(),
+            });
+          } catch (err) {
+            console.warn('[joinLobbyIndexTracker track error]', err);
+          }
+        }
+        notifyLobbyListeners();
+      }
+    });
+}
+
+function cleanupLobbyIndexChannelIfIdle(): void {
+  if (activeTrackPayload || lobbyPresenceListeners.size > 0) return;
+  if (lobbyIndexChannel) {
+    try {
+      lobbyIndexChannel.untrack();
+    } catch {}
+    supabase?.removeChannel(lobbyIndexChannel);
+    lobbyIndexChannel = null;
+    lobbyIndexSubscribed = false;
+  }
+}
+
+export function joinLobbyIndexTracker(userId: string, pollId: string): () => void {
+  if (!isSupabaseConfigured || !supabase || !userId || !pollId) {
+    return () => {};
+  }
+
+  activeTrackPayload = { userId, pollId };
+  ensureLobbyIndexChannel(userId);
+
+  if (lobbyIndexChannel && lobbyIndexSubscribed) {
+    try {
+      lobbyIndexChannel.track({
+        userId,
+        pollId,
+        joinedAt: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[joinLobbyIndexTracker immediate track error]', err);
+    }
+  }
+
+  return () => {
+    if (
+      activeTrackPayload &&
+      activeTrackPayload.userId === userId &&
+      activeTrackPayload.pollId === pollId
+    ) {
+      activeTrackPayload = null;
+      if (lobbyIndexChannel && lobbyIndexSubscribed) {
+        try {
+          lobbyIndexChannel.untrack();
+        } catch {}
+      }
+    }
+    cleanupLobbyIndexChannelIfIdle();
+  };
+}
+
+export function subscribeLobbyPresenceCounts(
+  onCountsChange: (counts: Record<string, number>) => void
+): () => void {
+  if (!isSupabaseConfigured || !supabase) {
+    return () => {};
+  }
+
+  lobbyPresenceListeners.add(onCountsChange);
+  ensureLobbyIndexChannel();
+
+  if (lobbyIndexChannel && lobbyIndexSubscribed) {
+    onCountsChange(computeLobbyCounts());
+  }
+
+  return () => {
+    lobbyPresenceListeners.delete(onCountsChange);
+    cleanupLobbyIndexChannelIfIdle();
+  };
+}
+
 
 
