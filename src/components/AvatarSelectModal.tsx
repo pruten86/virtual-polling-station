@@ -459,8 +459,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     selectedPoll.category === 'private' && !unlockedPrivatePollIds.has(selectedPoll.id);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl p-5 sm:p-7 text-slate-100 my-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-5 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl px-3 py-4 sm:p-7 text-slate-100 my-auto">
         {/* Header: 보트버스 (VOTEVERSE) Official Branding */}
         <div className="text-center mb-5">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-rose-500/10 border-2 border-rose-500/60 text-rose-500 mb-2.5 shadow-lg shadow-rose-950/40">
@@ -514,13 +514,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
         {/* 2. Polling Stations Lobby Tabs */}
         <div className="mb-5">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Vote className="w-4 h-4 text-emerald-400" />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-2">
+            <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+              <Vote className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>참여할 투표소 선택</span>
             </label>
-            <span className="text-[11px] text-slate-400">
-              현재 선택: <strong className="text-white truncate max-w-[140px] inline-block align-bottom">{selectedPoll.title}</strong>
+            <span className="text-[11px] text-slate-400 whitespace-normal break-keep break-words leading-snug">
+              현재 선택: <strong className="text-white whitespace-normal break-keep break-words">{selectedPoll.title}</strong>
             </span>
           </div>
 
@@ -577,7 +577,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
           {/* Tab 1: Public Polls List */}
           {activeTab === 'public' && (
-            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-[340px] sm:max-h-72 overflow-y-auto pr-0.5">
               {polls
                 .filter((p) => p.category !== 'private')
                 .map((poll) => {
@@ -613,7 +613,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         sounds.playClick();
                         setSelectedPollId(poll.id);
                       }}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`px-3 py-3.5 sm:p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-2 ${
                         isSelected
                           ? 'bg-sky-950/60 border-sky-400 ring-1 ring-sky-400/40 shadow-sm'
                           : isTimeClosed
@@ -621,57 +621,71 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                           : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800 hover:border-slate-600'
                       }`}
                     >
+                      {/* Top Row: Badges + Radio Indicator */}
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                            {poll.isOfficial ? (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30 flex items-center gap-1">
-                                <Layers className="w-3 h-3 text-sky-400" />
-                                <span>공식 ({channelBadge})</span>
-                              </span>
-                            ) : (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30">
-                                사용자 개설
-                              </span>
-                            )}
-
-                            {isTimeClosed ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50">
-                                🏁 투표 마감 · 개표 완료
-                              </span>
-                            ) : isFull ? (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                                정원 마감 (결과 열람 전용)
-                              </span>
-                            ) : null}
-
-                            <span className="text-xs font-bold text-white truncate">{poll.title}</span>
-                          </div>
-
-                          <p className="text-[11px] text-slate-400 truncate">{poll.description}</p>
-
-                          {/* Live Concurrent Visitors + Cumulative Votes + Timer */}
-                          <div className="flex items-center gap-2 mt-1.5 text-[10px] flex-wrap">
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
-                              <span>🟢 현재 접속 {liveCount}명</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {poll.isOfficial ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30 inline-flex items-center gap-1">
+                              <Layers className="w-3 h-3 text-sky-400" />
+                              <span>공식 ({channelBadge})</span>
                             </span>
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-bold">
-                              <span>🗳️ 누적 투표 {totalVotes}명</span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30">
+                              사용자 개설
                             </span>
-                            <span className="text-slate-400">{voterDetailText}</span>
-                            <span
-                              className={`flex items-center gap-1 font-semibold ${
-                                isTimeClosed ? 'text-rose-300' : 'text-amber-300/90'
-                              }`}
-                            >
-                              <Clock className="w-3 h-3" />
-                              <span>{remainingTimeStr}</span>
+                          )}
+
+                          {isTimeClosed ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50">
+                              🏁 투표 마감 · 개표 완료
                             </span>
-                          </div>
+                          ) : isFull ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                              정원 마감 (결과 열람 전용)
+                            </span>
+                          ) : null}
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {/* Direct Results Preview Button */}
+                        <div
+                          className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                            isSelected ? 'border-sky-400 bg-sky-500 text-white' : 'border-slate-600'
+                          }`}
+                        >
+                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                      </div>
+
+                      {/* Full-Width Title & Description (Never truncated) */}
+                      <div className="w-full space-y-1">
+                        <h3 className="text-xs sm:text-sm font-bold text-white whitespace-normal break-keep break-words leading-snug">
+                          {poll.title}
+                        </h3>
+                        <p className="text-[11px] text-slate-400 whitespace-normal break-keep break-words leading-snug">
+                          {poll.description}
+                        </p>
+                      </div>
+
+                      {/* Meta Stats + Action Buttons (Responsive Wrap) */}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-0.5">
+                        <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                            <span>🟢 현재 접속 {liveCount}명</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-bold">
+                            <span>🗳️ 누적 투표 {totalVotes}명</span>
+                          </span>
+                          <span className="text-slate-400">{voterDetailText}</span>
+                          <span
+                            className={`flex items-center gap-1 font-semibold ${
+                              isTimeClosed ? 'text-rose-300' : 'text-amber-300/90'
+                            }`}
+                          >
+                            <Clock className="w-3 h-3" />
+                            <span>{remainingTimeStr}</span>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
                           {onOpenResultsDirect && (
                             <button
                               type="button"
@@ -681,19 +695,17 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                 onOpenResultsDirect(poll);
                               }}
                               title="개표결과 및 방명록 바로보기"
-                              className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold transition cursor-pointer border ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition cursor-pointer border ${
                                 isTimeClosed
                                   ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400 text-white shadow-sm'
                                   : 'bg-slate-700/80 hover:bg-sky-600 border-slate-600 text-slate-200 hover:text-white'
                               }`}
                             >
-                              <BarChart3 className="w-3 h-3" />
-                              <span className="hidden sm:inline">개표결과 바로보기</span>
-                              <span className="sm:hidden">결과</span>
+                              <BarChart3 className="w-3 h-3 shrink-0" />
+                              <span>개표결과 바로보기</span>
                             </button>
                           )}
 
-                          {/* Custom Poll Edit & Delete Buttons */}
                           {poll.isCustom && (
                             <div className="flex items-center gap-1">
                               <button
@@ -728,7 +740,6 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                             </div>
                           )}
 
-                          {/* Copy Link Button */}
                           <button
                             type="button"
                             onClick={(e) => handleCopyLink(poll.id, e)}
@@ -741,28 +752,20 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                               <Copy className="w-3.5 h-3.5" />
                             )}
                           </button>
-
-                          <div
-                            className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                              isSelected ? 'border-sky-400 bg-sky-500 text-white' : 'border-slate-600'
-                            }`}
-                          >
-                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                          </div>
                         </div>
                       </div>
 
                       {/* Closed Poll Final Winner Summary Box + Official Docs PNG Trigger */}
                       {isTimeClosed && (
-                        <div className="mt-2.5 px-2.5 py-2 rounded-lg bg-slate-900/85 border border-emerald-500/35 flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1 text-[11px]">
-                            <Award className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <div className="mt-1 px-2.5 py-2 rounded-lg bg-slate-900/85 border border-emerald-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-start gap-1.5 text-[11px] min-w-0">
+                            <Award className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                             {winnerSummary.hasVotes ? (
-                              <span className="text-emerald-300 font-bold truncate">
+                              <span className="text-emerald-300 font-bold whitespace-normal break-keep break-words leading-snug">
                                 최종 결과 · {winnerSummary.summaryText}
                               </span>
                             ) : (
-                              <span className="text-slate-400 font-semibold">
+                              <span className="text-slate-400 font-semibold whitespace-normal break-keep break-words leading-snug">
                                 최종 결과 · 투표 없음 (0표)
                               </span>
                             )}
@@ -775,9 +778,9 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                 sounds.playClick();
                                 onOpenResultsDirect(poll, true);
                               }}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[10px] font-bold transition cursor-pointer shrink-0"
+                              className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[10px] font-bold transition cursor-pointer shrink-0 self-end sm:self-auto"
                             >
-                              <Trophy className="w-3 h-3 text-amber-300" />
+                              <Trophy className="w-3 h-3 text-amber-300 shrink-0" />
                               <span>당선증·공고문 저장</span>
                             </button>
                           ) : (
@@ -854,32 +857,36 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                 sounds.playClick();
                                 setSelectedPollId(p.id);
                               }}
-                              className={`p-2.5 rounded-lg border text-xs cursor-pointer transition ${
+                              className={`px-3 py-3 sm:p-3 rounded-lg border text-xs cursor-pointer transition flex flex-col gap-2 ${
                                 selectedPollId === p.id
                                   ? 'bg-amber-950/40 border-amber-400 text-amber-200'
                                   : 'bg-slate-800/40 border-slate-700 text-slate-300 hover:border-slate-600'
                               }`}
                             >
-                              <div className="flex justify-between items-center gap-2">
-                                <div className="flex items-center gap-2 truncate flex-1 pr-2">
-                                  {isUnlocked ? (
-                                    <Unlock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                                  ) : (
-                                    <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                  )}
-                                  <span className="truncate font-semibold">{p.title}</span>
+                              <div className="flex items-start gap-2 w-full">
+                                {isUnlocked ? (
+                                  <Unlock className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                                ) : (
+                                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                                )}
+                                <div className="flex-1 space-y-1 min-w-0">
+                                  <span className="font-semibold block whitespace-normal break-keep break-words leading-snug">
+                                    {p.title}
+                                  </span>
                                   {isTimeClosed ? (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40 shrink-0">
+                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40">
                                       🏁 투표 마감 · 개표 완료
                                     </span>
                                   ) : isFull ? (
-                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 shrink-0">
+                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                                       마감
                                     </span>
                                   ) : null}
                                 </div>
+                              </div>
 
-                                <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-[10px] text-emerald-300 font-bold">
                                     🟢 {liveCount}명
                                   </span>
@@ -889,7 +896,9 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                   <span className="text-[10px] text-amber-300/80">
                                     {remainingStr}
                                   </span>
+                                </div>
 
+                                <div className="flex items-center gap-1.5 flex-wrap justify-end">
                                   {onOpenResultsDirect && isUnlocked && (
                                     <button
                                       type="button"
@@ -898,13 +907,12 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                         sounds.playClick();
                                         onOpenResultsDirect(p);
                                       }}
-                                      className="px-1.5 py-0.5 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold transition cursor-pointer"
+                                      className="px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold transition cursor-pointer"
                                     >
                                       결과보기
                                     </button>
                                   )}
 
-                                  {/* Creator Admin Action Buttons */}
                                   {p.isCustom && (
                                     <div className="flex items-center gap-1">
                                       <button
@@ -941,8 +949,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                               </div>
 
                               {isTimeClosed && isUnlocked && (
-                                <div className="mt-1.5 px-2 py-1.5 rounded bg-slate-900/80 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold flex items-center justify-between gap-2">
-                                  <span className="truncate">
+                                <div className="px-2 py-1.5 rounded bg-slate-900/80 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <span className="whitespace-normal break-keep break-words leading-snug">
                                     🏆 {winnerSummary.summaryText} ({totalVotes}/{maxCap}명 참여)
                                   </span>
                                   {onOpenResultsDirect && (
@@ -953,7 +961,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                         sounds.playClick();
                                         onOpenResultsDirect(p, true);
                                       }}
-                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[9px] font-bold transition cursor-pointer shrink-0"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[9px] font-bold transition cursor-pointer shrink-0 self-end sm:self-auto"
                                     >
                                       <Trophy className="w-2.5 h-2.5" />
                                       <span>당선증·공고문</span>
@@ -1075,17 +1083,17 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
         </button>
 
         {/* Selected Poll indicator footer */}
-        <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 px-1 gap-2">
-          <div className="flex items-center gap-1.5 truncate">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span className="truncate">
+        <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between text-[11px] text-slate-400 px-1 gap-2">
+          <div className="flex items-start gap-1.5 min-w-0">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+            <span className="whitespace-normal break-keep break-words leading-snug">
               입장 안건: <strong className="text-slate-200">{selectedPoll.title}</strong>
-              <span className="ml-1.5 text-emerald-400 font-semibold">
+              <span className="ml-1.5 text-emerald-400 font-semibold inline-block">
                 (🟢 현재 접속 {livePresenceCounts[selectedPoll.id] || 0}명 · 🗳️ 누적 {selectedPollDisplayTotal}명
                 {!selectedPoll.isOfficial ? ` / ${selectedPollCapacity}명` : ''})
               </span>
               {selectedPoll.category === 'private' && (
-                <span className={`ml-1 font-bold ${isSelectedPrivateLocked ? 'text-amber-400' : 'text-emerald-400'}`}>
+                <span className={`ml-1 font-bold inline-block ${isSelectedPrivateLocked ? 'text-amber-400' : 'text-emerald-400'}`}>
                   {isSelectedPrivateLocked ? '[비공개: 잠김]' : '[인증완료]'}
                 </span>
               )}
@@ -1095,7 +1103,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
           <button
             type="button"
             onClick={(e) => handleCopyLink(selectedPoll.id, e)}
-            className="text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold shrink-0 cursor-pointer"
+            className="text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold shrink-0 cursor-pointer self-end sm:self-auto"
           >
             <Copy className="w-3 h-3" />
             <span>{copiedId === selectedPoll.id ? '링크 복사됨!' : '공유 링크 복사'}</span>
@@ -1135,7 +1143,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                 <h3 className="text-sm font-bold text-white">
                   {adminAuthModal.type === 'delete' ? '투표소 삭제 확인' : '투표소 수정 권한 확인'}
                 </h3>
-                <p className="text-[11px] text-slate-400 truncate max-w-[200px]">
+                <p className="text-[11px] text-slate-400 whitespace-normal break-keep break-words leading-snug">
                   {adminAuthModal.poll.title}
                 </p>
               </div>
@@ -1381,7 +1389,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white">비공개 투표소 입장 코드</h3>
-                <p className="text-[11px] text-slate-400 truncate max-w-[200px]">
+                <p className="text-[11px] text-slate-400 whitespace-normal break-keep break-words leading-snug">
                   {accessCodeModalPoll.title}
                 </p>
               </div>

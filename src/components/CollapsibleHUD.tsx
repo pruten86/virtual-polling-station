@@ -142,12 +142,6 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                 보트버스 VOTEVERSE
               </span>
 
-              {pollTitle && (
-                <span className="hidden md:inline-block px-2 py-0.5 rounded-full bg-slate-800 text-[11px] text-sky-300 font-semibold truncate max-w-[170px] border border-slate-700 shrink-0">
-                  {pollTitle}
-                </span>
-              )}
-
               {/* 1. Official 100-voter channel badge or custom voter count with whitespace-nowrap & shrink-0 */}
               {isOfficial ? (
                 <span className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/40 whitespace-nowrap shrink-0">
@@ -261,14 +255,26 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
             </div>
           </div>
 
+          {/* Active Poll Title Strip (Always readable without truncation on mobile & PC) */}
+          {pollTitle && (
+            <div className="mt-1.5 px-2.5 py-1 rounded-lg bg-slate-800/75 border border-slate-700/70 flex items-start gap-1.5">
+              <span className="text-[10px] sm:text-[11px] font-bold text-sky-400 shrink-0">
+                현재 안건
+              </span>
+              <span className="text-[11px] sm:text-xs font-bold text-white whitespace-normal break-keep break-words leading-snug">
+                {pollTitle}
+              </span>
+            </div>
+          )}
+
           {/* Closed / Observer Mode Summary Banner */}
           {isClosed && (
-            <div className="mt-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-emerald-950/80 border border-rose-500/40 flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0">
+            <div className="mt-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-emerald-950/80 border border-rose-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 min-w-0">
+                <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0 self-start sm:self-auto">
                   🏁 투표 마감 · 개표 참관 모드
                 </span>
-                <span className="text-emerald-300 font-bold truncate">
+                <span className="text-emerald-300 font-bold whitespace-normal break-keep break-words leading-snug">
                   {winnerSummaryText || '개표 완료'}
                 </span>
               </div>
@@ -278,7 +284,7 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                   sounds.playClick();
                   onOpenResults();
                 }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer whitespace-nowrap shrink-0"
+                className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer whitespace-nowrap shrink-0 self-end sm:self-auto"
               >
                 <BarChart3 className="w-3.5 h-3.5" />
                 <span>최종 개표결과 보기</span>

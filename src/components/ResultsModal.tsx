@@ -399,7 +399,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
               </span>
             </div>
 
-            <h2 className="text-xl sm:text-2xl font-bold text-white truncate">
+            <h2 className="text-lg sm:text-2xl font-bold text-white whitespace-normal break-keep break-words leading-snug">
               {pollTitle || '실시간 모의투표 개표 현황'}
             </h2>
             <p className="text-xs text-slate-400">
@@ -586,9 +586,13 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                     <span className="w-5 h-5 rounded-md bg-slate-700 flex items-center justify-center text-xs font-bold text-white shrink-0">
                       {candidate.symbolNumber}
                     </span>
-                    <div className="min-w-0 truncate">
-                      <span className="text-xs sm:text-sm font-bold text-white truncate block">{candidate.title}</span>
-                      <span className="text-[10px] sm:text-xs text-slate-400 truncate block">({candidate.party})</span>
+                    <div className="min-w-0">
+                      <span className="text-xs sm:text-sm font-bold text-white whitespace-normal break-keep break-words leading-snug block">
+                        {candidate.title}
+                      </span>
+                      <span className="text-[10px] sm:text-xs text-slate-400 whitespace-normal break-keep break-words leading-snug block">
+                        ({candidate.party})
+                      </span>
                     </div>
                     {isUserChoice && (
                       <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/30 shrink-0">
@@ -825,10 +829,10 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                   <Trophy className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-sm sm:text-base font-extrabold text-white truncate">
+                  <h3 className="text-sm sm:text-base font-extrabold text-white whitespace-normal break-keep break-words leading-snug">
                     공식 당선증 · 개표 공고문 발급
                   </h3>
-                  <p className="text-[11px] text-slate-400 truncate">
+                  <p className="text-[11px] text-slate-400 whitespace-normal break-keep break-words leading-snug">
                     1080×1350 고화질 PNG 이미지로 저장해 바로 공유하세요!
                   </p>
                 </div>
