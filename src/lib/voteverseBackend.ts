@@ -1045,25 +1045,30 @@ export interface VoteCastPayload {
   candidateId: string;
 }
 
+export interface PlayerStateInput {
+  nickname?: string;
+  avatarType?: 'male' | 'female';
+  x: number;
+  z: number;
+  rotY: number;
+  isMoving: boolean;
+}
+
 export interface MultiplayerRoomHandle {
   channel: any;
   isSubscribed: () => boolean;
-  sendPlayerState: (state: {
-    nickname: string;
-    avatarType: 'male' | 'female';
-    x: number;
-    z: number;
-    rotY: number;
-    isMoving: boolean;
-  }) => void;
-  sendMove: (
-    x: number,
-    z: number,
-    rotY: number,
-    isMoving: boolean,
-    nickname?: string,
-    avatarType?: 'male' | 'female'
-  ) => void;
+  sendPlayerState: (state: PlayerStateInput) => void;
+  sendMove: {
+    (
+      x: number,
+      z: number,
+      rotY: number,
+      isMoving: boolean,
+      nickname?: string,
+      avatarType?: 'male' | 'female'
+    ): void;
+    (state: PlayerStateInput): void;
+  };
   updatePresence: (
     x: number,
     z: number,
@@ -1077,9 +1082,11 @@ export interface MultiplayerRoomHandle {
 }
 
 /**
- * Connect to polling station room using unified Supabase Presence & Broadcast
+ * Connect to polling station room using Supabase Presence & Broadcast
  * Channel name: voteverse_room_${pollId}
- * Emits initial track + player_state on SUBSCRIBED, and routes presence & player_state/player_move into onPeerState
+ * - channel.track() is called ONCE on SUBSCRIBED (never during movement)
+ * - All movement & heartbeat sync uses Broadcast 'player_state' exclusively
+ * - Ignores spurious Presence 'leave' events; deletes remote avatars only on explicit 'player_leave' broadcast (or timeout in client)
  */
 export function joinMultiplayerRoom(
   pollId: string,
@@ -1123,13 +1130,22 @@ export function joinMultiplayerRoom(
     if (!raw && !fallbackKey) return null;
     const userId = String(raw?.userId || fallbackKey || '').trim();
     if (!userId || userId === localPlayer.userId) return null;
+
+    const rawX = Number(raw?.x);
+    const rawZ = Number(raw?.z);
+    const rawRotY = Number(raw?.rotY);
+
+    // Reject broadcast payloads with invalid/NaN coordinates so avatars never vanish
+    if (raw?.x !== undefined && !Number.isFinite(rawX)) return null;
+    if (raw?.z !== undefined && !Number.isFinite(rawZ)) return null;
+
     return {
       userId,
       nickname: typeof raw?.nickname === 'string' && raw.nickname.trim() ? raw.nickname : '선거인',
       avatarType: raw?.avatarType === 'female' ? 'female' : 'male',
-      x: typeof raw?.x === 'number' && !Number.isNaN(raw.x) ? raw.x : -6.5,
-      z: typeof raw?.z === 'number' && !Number.isNaN(raw.z) ? raw.z : 0.5,
-      rotY: typeof raw?.rotY === 'number' && !Number.isNaN(raw.rotY) ? raw.rotY : 0,
+      x: Number.isFinite(rawX) ? rawX : -6.5,
+      z: Number.isFinite(rawZ) ? rawZ : 0.5,
+      rotY: Number.isFinite(rawRotY) ? rawRotY : 0,
       isMoving: Boolean(raw?.isMoving),
     };
   };
@@ -1166,19 +1182,15 @@ export function joinMultiplayerRoom(
       }
       syncPresencePeers();
     })
-    .on('presence', { event: 'leave' }, ({ key, leftPresences }: any) => {
+    .on('presence', { event: 'leave' }, () => {
+      // Do NOT call onPeerLeave on Presence leave (Supabase emits leave on track updates/reconnects).
+      // Only refresh presence count safely; actual avatar removal is driven by 'player_leave' broadcast or 12s timeout.
       const state = channel.presenceState();
-      if (Array.isArray(leftPresences) && leftPresences.length > 0) {
-        leftPresences.forEach((item: any) => {
-          const leftId = String(item?.userId || key || '').trim();
-          if (leftId && leftId !== localPlayer.userId && !state[leftId]) {
-            callbacks.onPeerLeave?.(leftId);
-          }
-        });
-      } else if (key && key !== localPlayer.userId && !state[key]) {
-        callbacks.onPeerLeave?.(String(key));
-      }
-      syncPresencePeers();
+      const activeIds = new Set<string>();
+      Object.keys(state).forEach((k) => {
+        if (k && k !== localPlayer.userId) activeIds.add(k);
+      });
+      callbacks.onPresenceCount?.(activeIds.size + 1);
     })
     .on('broadcast', { event: 'player_state' }, ({ payload }: any) => {
       const peer = normalizePeer(payload);
@@ -1206,16 +1218,21 @@ export function joinMultiplayerRoom(
     .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
         subscribed = true;
+        const safeX = Number.isFinite(Number(localPlayer.x)) ? Number(localPlayer.x) : -6.5;
+        const safeZ = Number.isFinite(Number(localPlayer.z)) ? Number(localPlayer.z) : 0.5;
+        const safeRotY = Number.isFinite(Number(localPlayer.rotY)) ? Number(localPlayer.rotY) : Math.PI;
+
         const initialPayload = {
           userId: localPlayer.userId,
           nickname: localPlayer.nickname,
           avatarType: localPlayer.avatarType,
-          x: localPlayer.x,
-          z: localPlayer.z,
-          rotY: localPlayer.rotY,
+          x: safeX,
+          z: safeZ,
+          rotY: safeRotY,
           isMoving: false,
         };
 
+        // Call channel.track() ONCE on SUBSCRIBED (never during movement)
         try {
           await channel.track(initialPayload);
         } catch (err) {
@@ -1234,30 +1251,29 @@ export function joinMultiplayerRoom(
       }
     });
 
-  const sendStateBroadcast = (
-    event: 'player_state' | 'player_move',
-    state: {
-      nickname?: string;
-      avatarType?: 'male' | 'female';
-      x: number;
-      z: number;
-      rotY: number;
-      isMoving: boolean;
-    }
-  ) => {
+  const sendStateBroadcast = (state: PlayerStateInput) => {
     if (!subscribed) return;
+    const x = Number(state.x);
+    const z = Number(state.z);
+    const rotY = Number(state.rotY);
+
+    // Block NaN coordinates from ever leaving the client
+    if (!Number.isFinite(x) || !Number.isFinite(z)) {
+      return;
+    }
+
     try {
       channel.send({
         type: 'broadcast',
-        event,
+        event: 'player_state',
         payload: {
           userId: localPlayer.userId,
           nickname: state.nickname || localPlayer.nickname,
           avatarType: state.avatarType || localPlayer.avatarType,
-          x: state.x,
-          z: state.z,
-          rotY: state.rotY,
-          isMoving: state.isMoving,
+          x,
+          z,
+          rotY: Number.isFinite(rotY) ? rotY : 0,
+          isMoving: Boolean(state.isMoving),
         },
       });
     } catch {
@@ -1268,34 +1284,47 @@ export function joinMultiplayerRoom(
   return {
     channel,
     isSubscribed: () => subscribed,
-    sendPlayerState: (state) => {
-      sendStateBroadcast('player_state', state);
+    sendPlayerState: (state: PlayerStateInput) => {
+      sendStateBroadcast(state);
     },
-    sendMove: (x, z, rotY, isMoving, nickname, avatarType) => {
-      sendStateBroadcast('player_state', {
-        nickname: nickname || localPlayer.nickname,
-        avatarType: avatarType || localPlayer.avatarType,
+    sendMove: (
+      arg1: number | PlayerStateInput,
+      arg2?: number,
+      arg3?: number,
+      arg4?: boolean,
+      arg5?: string,
+      arg6?: 'male' | 'female'
+    ) => {
+      if (typeof arg1 === 'object' && arg1 !== null) {
+        sendStateBroadcast(arg1);
+      } else {
+        sendStateBroadcast({
+          x: Number(arg1),
+          z: Number(arg2),
+          rotY: Number(arg3),
+          isMoving: Boolean(arg4),
+          nickname: arg5,
+          avatarType: arg6,
+        });
+      }
+    },
+    // Never call channel.track() during movement; route safely to Broadcast player_state
+    updatePresence: (
+      x: number,
+      z: number,
+      rotY: number,
+      isMoving: boolean,
+      nickname?: string,
+      avatarType?: 'male' | 'female'
+    ) => {
+      sendStateBroadcast({
         x,
         z,
         rotY,
         isMoving,
+        nickname,
+        avatarType,
       });
-    },
-    updatePresence: (x, z, rotY, isMoving, nickname, avatarType) => {
-      if (!subscribed) return;
-      try {
-        channel.track({
-          userId: localPlayer.userId,
-          nickname: nickname || localPlayer.nickname,
-          avatarType: avatarType || localPlayer.avatarType,
-          x,
-          z,
-          rotY,
-          isMoving,
-        });
-      } catch {
-        // silent fail
-      }
     },
     broadcastVote: (nickname: string, candidateId: string) => {
       if (!subscribed) return;

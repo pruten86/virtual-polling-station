@@ -50,6 +50,19 @@ const _targetLookAt = new THREE.Vector3();
 const _currentCamPos = new THREE.Vector3();
 const _currentLookAt = new THREE.Vector3();
 
+function getSpawnOffsetFromId(peerId: string): { dx: number; dz: number } {
+  let h1 = 0;
+  let h2 = 0;
+  for (let i = 0; i < peerId.length; i++) {
+    const ch = peerId.charCodeAt(i);
+    h1 = (h1 * 31 + ch) & 0xffff;
+    h2 = (h2 * 37 + ch * 7) & 0xffff;
+  }
+  const dx = ((h1 / 0xffff) * 2 - 1) * 0.7;
+  const dz = ((h2 / 0xffff) * 2 - 1) * 0.7;
+  return { dx, dz };
+}
+
 // Build official 100-voter channel summary & breakdown strictly from live DB candidate totals
 function buildOfficialChannelState(cands: Candidate[]): {
   activeChannelIndex: number;
@@ -209,6 +222,13 @@ export default function App() {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   // Per-tab unique ID via sessionStorage so multiple tabs/windows & cross-device users always show as distinct 3D avatars
   const multiplayerPeerId = useRef<string>(getMultiplayerSessionId()).current;
+  // Deterministic ±0.7m spawn offset so simultaneous entrants never overlap identically
+  const spawnPos = useRef<{ x: number; z: number }>(
+    (() => {
+      const { dx, dz } = getSpawnOffsetFromId(multiplayerPeerId);
+      return { x: -6.5 + dx, z: 0.5 + dz };
+    })()
+  ).current;
 
   // Mutable refs for Three.js engine and input
   const playerRef = useRef<CharacterController | null>(null);
@@ -270,15 +290,9 @@ export default function App() {
     avatarTypeRef.current = avatarType;
   }, [avatarType]);
   const lastBroadcastTimeRef = useRef<number>(0);
-  const lastPresenceTrackTimeRef = useRef<number>(0);
   const lastBroadcastPosRef = useRef<{ x: number; z: number; rotY: number }>({
-    x: -6.5,
-    z: 0.5,
-    rotY: Math.PI,
-  });
-  const lastPresencePosRef = useRef<{ x: number; z: number; rotY: number }>({
-    x: -6.5,
-    z: 0.5,
+    x: spawnPos.x,
+    z: spawnPos.z,
     rotY: Math.PI,
   });
   const lastSentMovingRef = useRef<boolean>(false);
@@ -536,18 +550,26 @@ export default function App() {
     const currentMap = remoteAvatarsRef.current;
 
     const refreshOnlineCount = () => {
-      const nextCount = Math.max(presenceCountRef.current, 1 + currentMap.size);
+      const nextCount = Math.max(1 + currentMap.size, presenceCountRef.current);
       setOnlineCount((prev) => (prev === nextCount ? prev : nextCount));
     };
 
     const upsertRemoteAvatar = (peer: RemotePlayer) => {
       if (!peer || !peer.userId || peer.userId === multiplayerPeerId) return;
 
+      const parsedX = Number(peer.x);
+      const parsedZ = Number(peer.z);
+      const parsedRotY = Number(peer.rotY);
+      const hasValidCoords = Number.isFinite(parsedX) && Number.isFinite(parsedZ);
+
       const existing = currentMap.get(peer.userId);
       if (!existing) {
+        if (!hasValidCoords) return;
+
+        const safeRotY = Number.isFinite(parsedRotY) ? parsedRotY : 0;
         const controller = createProceduralAvatar(peer.avatarType);
-        controller.group.position.set(peer.x, 0, peer.z);
-        controller.lookAtAngle(peer.rotY);
+        controller.group.position.set(parsedX, 0, parsedZ);
+        controller.lookAtAngle(safeRotY);
 
         const nameTag = createNameTagSprite(peer.nickname || '선거인');
         controller.group.add(nameTag);
@@ -561,9 +583,9 @@ export default function App() {
           nameTag,
           nickname: peer.nickname || '선거인',
           avatarType: peer.avatarType,
-          targetX: peer.x,
-          targetZ: peer.z,
-          targetRotY: peer.rotY,
+          targetX: parsedX,
+          targetZ: parsedZ,
+          targetRotY: safeRotY,
           isMoving: Boolean(peer.isMoving),
           lastSeen: Date.now(),
         });
@@ -575,9 +597,13 @@ export default function App() {
           existing.nameTag = nextTag;
           existing.nickname = peer.nickname;
         }
-        existing.targetX = peer.x;
-        existing.targetZ = peer.z;
-        existing.targetRotY = peer.rotY;
+        if (hasValidCoords) {
+          existing.targetX = parsedX;
+          existing.targetZ = parsedZ;
+        }
+        if (Number.isFinite(parsedRotY)) {
+          existing.targetRotY = parsedRotY;
+        }
         existing.isMoving = Boolean(peer.isMoving);
         existing.lastSeen = Date.now();
       }
@@ -603,9 +629,18 @@ export default function App() {
         userId: multiplayerPeerId,
         nickname: nicknameRef.current,
         avatarType: avatarTypeRef.current,
-        x: playerRef.current ? playerRef.current.group.position.x : -6.5,
-        z: playerRef.current ? playerRef.current.group.position.z : 0.5,
-        rotY: playerRef.current ? playerRef.current.group.rotation.y : Math.PI,
+        x:
+          playerRef.current && Number.isFinite(playerRef.current.group.position.x)
+            ? playerRef.current.group.position.x
+            : spawnPos.x,
+        z:
+          playerRef.current && Number.isFinite(playerRef.current.group.position.z)
+            ? playerRef.current.group.position.z
+            : spawnPos.z,
+        rotY:
+          playerRef.current && Number.isFinite(playerRef.current.group.rotation.y)
+            ? playerRef.current.group.rotation.y
+            : Math.PI,
       },
       {
         onPeerState: upsertRemoteAvatar,
@@ -626,16 +661,29 @@ export default function App() {
 
     roomHandleRef.current = room;
 
-    // 400ms heartbeat: continuously broadcast latest state & prune >5s inactive peers
+    // 400ms heartbeat: continuously broadcast latest state via Broadcast & prune >12s inactive peers
     const heartbeatTimer = window.setInterval(() => {
       if (room.isSubscribed()) {
         const player = playerRef.current;
+        const curX =
+          player && Number.isFinite(player.group.position.x)
+            ? player.group.position.x
+            : spawnPos.x;
+        const curZ =
+          player && Number.isFinite(player.group.position.z)
+            ? player.group.position.z
+            : spawnPos.z;
+        const curRotY =
+          player && Number.isFinite(player.group.rotation.y)
+            ? player.group.rotation.y
+            : Math.PI;
+
         room.sendPlayerState({
           nickname: nicknameRef.current,
           avatarType: avatarTypeRef.current,
-          x: player ? player.group.position.x : -6.5,
-          z: player ? player.group.position.z : 0.5,
-          rotY: player ? player.group.rotation.y : Math.PI,
+          x: curX,
+          z: curZ,
+          rotY: curRotY,
           isMoving: isMovingRef.current,
         });
       }
@@ -643,7 +691,7 @@ export default function App() {
       const now = Date.now();
       let removedAny = false;
       for (const [id, entry] of currentMap.entries()) {
-        if (now - entry.lastSeen > 5000) {
+        if (now - entry.lastSeen > 12000) {
           if (sceneRef.current) {
             sceneRef.current.remove(entry.controller.group);
           }
@@ -991,9 +1039,9 @@ export default function App() {
     scene.add(envResult.sceneGroup);
     envResultRef.current = envResult;
 
-    // 6. Spawn Procedural Player Avatar at Entrance
+    // 6. Spawn Procedural Player Avatar at Entrance (with unique ±0.7m offset)
     const playerAvatar = createProceduralAvatar(avatarType);
-    playerAvatar.group.position.set(-6.5, 0, 0.5);
+    playerAvatar.group.position.set(spawnPos.x, 0, spawnPos.z);
     playerAvatar.lookAtAngle(Math.PI); // Facing towards verification desk (-Z)
     scene.add(playerAvatar.group);
     playerRef.current = playerAvatar;
@@ -1104,7 +1152,7 @@ export default function App() {
 
         player.update(isMoving, delta, moveSpeed);
 
-        // Compare actual 3D group coordinates (keyboard OR mobile joystick) & sync via Broadcast (80ms) + Presence (250ms)
+        // Compare actual 3D group coordinates (keyboard OR mobile joystick) & sync strictly via Broadcast player_state (80ms)
         const room = roomHandleRef.current;
         if (room) {
           const now = performance.now();
@@ -1112,71 +1160,41 @@ export default function App() {
           const curZ = player.group.position.z;
           const curRot = player.group.rotation.y;
 
-          const broadcastDist = Math.hypot(
-            curX - lastBroadcastPosRef.current.x,
-            curZ - lastBroadcastPosRef.current.z
-          );
-          const broadcastRotDiff = Math.abs(curRot - lastBroadcastPosRef.current.rotY);
-
-          const presenceDist = Math.hypot(
-            curX - lastPresencePosRef.current.x,
-            curZ - lastPresencePosRef.current.z
-          );
-          const presenceRotDiff = Math.abs(curRot - lastPresencePosRef.current.rotY);
-
-          const hasBroadcastDelta = broadcastDist >= 0.01 || broadcastRotDiff >= 0.02;
-          const hasPresenceDelta = presenceDist >= 0.01 || presenceRotDiff >= 0.02;
-
-          if (hasBroadcastDelta && now - lastBroadcastTimeRef.current >= 80) {
-            lastBroadcastTimeRef.current = now;
-            lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
-            room.sendPlayerState({
-              nickname: nicknameRef.current,
-              avatarType: avatarTypeRef.current,
-              x: curX,
-              z: curZ,
-              rotY: curRot,
-              isMoving,
-            });
-            lastSentMovingRef.current = true;
-          }
-
-          if (hasPresenceDelta && now - lastPresenceTrackTimeRef.current >= 250) {
-            lastPresenceTrackTimeRef.current = now;
-            lastPresencePosRef.current = { x: curX, z: curZ, rotY: curRot };
-            room.updatePresence(
-              curX,
-              curZ,
-              curRot,
-              isMoving,
-              nicknameRef.current,
-              avatarTypeRef.current
+          if (Number.isFinite(curX) && Number.isFinite(curZ)) {
+            const broadcastDist = Math.hypot(
+              curX - lastBroadcastPosRef.current.x,
+              curZ - lastBroadcastPosRef.current.z
             );
-            lastSentMovingRef.current = true;
-          }
+            const broadcastRotDiff = Math.abs(curRot - lastBroadcastPosRef.current.rotY);
+            const hasBroadcastDelta = broadcastDist >= 0.01 || broadcastRotDiff >= 0.02;
 
-          if (!isMoving && lastSentMovingRef.current) {
-            lastSentMovingRef.current = false;
-            lastBroadcastTimeRef.current = now;
-            lastPresenceTrackTimeRef.current = now;
-            lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
-            lastPresencePosRef.current = { x: curX, z: curZ, rotY: curRot };
-            room.sendPlayerState({
-              nickname: nicknameRef.current,
-              avatarType: avatarTypeRef.current,
-              x: curX,
-              z: curZ,
-              rotY: curRot,
-              isMoving: false,
-            });
-            room.updatePresence(
-              curX,
-              curZ,
-              curRot,
-              false,
-              nicknameRef.current,
-              avatarTypeRef.current
-            );
+            if (hasBroadcastDelta && now - lastBroadcastTimeRef.current >= 80) {
+              lastBroadcastTimeRef.current = now;
+              lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
+              room.sendPlayerState({
+                nickname: nicknameRef.current,
+                avatarType: avatarTypeRef.current,
+                x: curX,
+                z: curZ,
+                rotY: curRot,
+                isMoving,
+              });
+              lastSentMovingRef.current = true;
+            }
+
+            if (!isMoving && lastSentMovingRef.current) {
+              lastSentMovingRef.current = false;
+              lastBroadcastTimeRef.current = now;
+              lastBroadcastPosRef.current = { x: curX, z: curZ, rotY: curRot };
+              room.sendPlayerState({
+                nickname: nicknameRef.current,
+                avatarType: avatarTypeRef.current,
+                x: curX,
+                z: curZ,
+                rotY: curRot,
+                isMoving: false,
+              });
+            }
           }
         }
 
@@ -1231,8 +1249,12 @@ export default function App() {
         }
       }
 
-      // Update Remote Players' 3D Avatars (Smooth lerp(0.22) interpolation + walk animation)
+      // Update Remote Players' 3D Avatars (Smooth lerp(0.22) interpolation + walk animation with NaN guard)
       for (const entry of remoteAvatarsRef.current.values()) {
+        if (!Number.isFinite(entry.targetX) || !Number.isFinite(entry.targetZ)) {
+          continue;
+        }
+
         const dist = Math.hypot(
           entry.targetX - entry.controller.group.position.x,
           entry.targetZ - entry.controller.group.position.z
@@ -1249,11 +1271,13 @@ export default function App() {
           0.22
         );
 
-        const curAngle = entry.controller.group.rotation.y;
-        let diff = entry.targetRotY - curAngle;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        entry.controller.lookAtAngle(curAngle + diff * 0.22);
+        if (Number.isFinite(entry.targetRotY)) {
+          const curAngle = entry.controller.group.rotation.y;
+          let diff = entry.targetRotY - curAngle;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          entry.controller.lookAtAngle(curAngle + diff * 0.22);
+        }
 
         const isRemoteMoving = dist >= 0.03 || Boolean(entry.isMoving);
         entry.controller.update(isRemoteMoving, delta, 4.8);
@@ -1375,8 +1399,9 @@ export default function App() {
     }
 
     if (playerRef.current) {
-      playerRef.current.group.position.set(-6.5, 0, 0.5);
+      playerRef.current.group.position.set(spawnPos.x, 0, spawnPos.z);
       playerRef.current.lookAtAngle(Math.PI);
+      lastBroadcastPosRef.current = { x: spawnPos.x, z: spawnPos.z, rotY: Math.PI };
     }
 
     setHasEntered(true);
@@ -1422,9 +1447,14 @@ export default function App() {
       playerRef.current.group.position.set(-6.5, 0, -2.3);
       playerRef.current.lookAtAngle(Math.PI);
       lastBroadcastPosRef.current = { x: -6.5, z: -2.3, rotY: Math.PI };
-      lastPresencePosRef.current = { x: -6.5, z: -2.3, rotY: Math.PI };
-      roomHandleRef.current?.sendMove(-6.5, -2.3, Math.PI, false);
-      roomHandleRef.current?.updatePresence(-6.5, -2.3, Math.PI, false);
+      roomHandleRef.current?.sendMove(
+        -6.5,
+        -2.3,
+        Math.PI,
+        false,
+        nicknameRef.current,
+        avatarTypeRef.current
+      );
     }
 
     await syncTalliesFromDB(currentPoll, currentPoll.candidates);
