@@ -17,8 +17,16 @@ import {
   User,
   Flag,
   TimerOff,
+  Download,
+  ScrollText,
+  Trophy,
 } from 'lucide-react';
 import { BETA_DISCLAIMER_TEXT, getPollWinnerSummary } from '../data/presetPolls';
+import {
+  renderWinnerCertificateCanvas,
+  renderFinalResultsCanvas,
+  downloadCanvasAsPng,
+} from '../utils/officialPollImages';
 import {
   supabase,
   isSupabaseConfigured,
@@ -52,6 +60,7 @@ interface ResultsModalProps {
   guestbookMessages?: GuestbookMessage[];
   isGuestbookLoading?: boolean;
   onPostGuestbook?: (message: string) => Promise<{ success: boolean; error?: string }>;
+  initialOpenOfficialDocs?: boolean;
 }
 
 export const ResultsModal: React.FC<ResultsModalProps> = ({
@@ -76,12 +85,20 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   guestbookMessages,
   isGuestbookLoading,
   onPostGuestbook,
+  initialOpenOfficialDocs = false,
 }) => {
   // View mode for official polls: 'cumulative' or channel index number (1, 2, 3...)
   const [selectedChannelView, setSelectedChannelView] = useState<'cumulative' | number>('cumulative');
 
   // Realtime Candidate Tallies state synced with parent
   const [liveCandidates, setLiveCandidates] = useState<Candidate[]>(candidates);
+
+  // Official Winner Certificate & Final Results Announcement Sub-modal
+  const [isDocsModalOpen, setIsDocsModalOpen] = useState<boolean>(initialOpenOfficialDocs);
+  const [docsTab, setDocsTab] = useState<'certificate' | 'announcement'>('certificate');
+  const [previewDataUrl, setPreviewDataUrl] = useState<string>('');
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState<boolean>(false);
+  const latestCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Guestbook state (uses parent App state when provided, or standalone DB state)
   const [internalGuestbook, setInternalGuestbook] = useState<GuestbookMessage[]>([]);
@@ -257,6 +274,64 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   const sorted = [...displayedCandidates].sort((a, b) => b.votes - a.votes);
   const leading = sorted[0];
 
+  // Generate high-res 1080x1350 Canvas preview whenever official docs modal is open
+  useEffect(() => {
+    if (!isDocsModalOpen) return;
+    let cancelled = false;
+    setIsGeneratingDoc(true);
+
+    const payload = {
+      pollTitle: pollTitle || '실시간 모의투표 개표 현황',
+      candidates: displayedCandidates,
+      winnerSummary,
+      isClosed,
+    };
+
+    const renderPromise =
+      docsTab === 'certificate'
+        ? renderWinnerCertificateCanvas(payload)
+        : renderFinalResultsCanvas(payload);
+
+    renderPromise
+      .then((canvas) => {
+        if (cancelled) return;
+        latestCanvasRef.current = canvas;
+        setPreviewDataUrl(canvas.toDataURL('image/png'));
+      })
+      .finally(() => {
+        if (!cancelled) setIsGeneratingDoc(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDocsModalOpen, docsTab, pollTitle, displayedCandidates, winnerSummary, isClosed]);
+
+  const handleDownloadOfficialImage = async () => {
+    sounds.playClick();
+    const filename =
+      docsTab === 'certificate'
+        ? 'voteverse-winner-certificate.png'
+        : 'voteverse-final-results.png';
+
+    if (latestCanvasRef.current) {
+      downloadCanvasAsPng(latestCanvasRef.current, filename);
+      return;
+    }
+
+    const payload = {
+      pollTitle: pollTitle || '실시간 모의투표 개표 현황',
+      candidates: displayedCandidates,
+      winnerSummary,
+      isClosed,
+    };
+    const canvas =
+      docsTab === 'certificate'
+        ? await renderWinnerCertificateCanvas(payload)
+        : await renderFinalResultsCanvas(payload);
+    downloadCanvasAsPng(canvas, filename);
+  };
+
   const formatRelativeTime = (isoString: string): string => {
     try {
       const diffSecs = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
@@ -401,43 +476,72 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
           </div>
         )}
 
-        {/* 1st Place / Final Result Banner */}
+        {/* 1st Place / Final Result Banner + Official Certificate & Results Card Trigger */}
         {isClosed && !winnerSummary.hasVotes ? (
-          <div className="flex items-center gap-3 p-3.5 rounded-xl bg-slate-800/80 border border-slate-600/60 mb-4">
-            <Flag className="w-5 h-5 text-slate-400 shrink-0" />
-            <div className="text-xs">
-              <span className="font-bold text-slate-200">최종 개표 결과: </span>
-              <span className="font-extrabold text-slate-300 text-sm">투표 없음 (0표)</span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-800/80 border border-slate-600/60 mb-4">
+            <div className="flex items-center gap-3">
+              <Flag className="w-5 h-5 text-slate-400 shrink-0" />
+              <div className="text-xs">
+                <span className="font-bold text-slate-200">최종 개표 결과: </span>
+                <span className="font-extrabold text-slate-300 text-sm">투표 없음 (0표)</span>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                setDocsTab('announcement');
+                setIsDocsModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-200 font-extrabold text-xs transition cursor-pointer shrink-0 active:scale-95"
+            >
+              <Trophy className="w-3.5 h-3.5 text-amber-300" />
+              <span>🏆 당선증 · 개표공고문 이미지 발급</span>
+            </button>
           </div>
         ) : leading && totalVotes > 0 ? (
           <div
-            className={`flex items-center gap-3 p-3.5 rounded-xl border mb-4 ${
+            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border mb-4 ${
               isClosed
                 ? 'bg-gradient-to-r from-emerald-500/20 via-amber-500/15 to-orange-500/15 border-emerald-400/50'
                 : 'bg-gradient-to-r from-amber-500/15 to-orange-500/15 border-amber-500/30'
             }`}
           >
-            <Award className={`w-6 h-6 shrink-0 ${isClosed ? 'text-emerald-300' : 'text-amber-400'}`} />
-            <div className="text-xs">
-              <span className={`font-bold ${isClosed ? 'text-emerald-300' : 'text-amber-300'}`}>
-                {isClosed
-                  ? winnerSummary.isTie
-                    ? '🏆 최종 확정 결과 (공동 1위): '
-                    : '🏆 최종 확정 결과 (1위): '
-                  : winnerSummary.isTie
-                  ? '현재 공동 1위: '
-                  : '현재 1위 우세: '}
-              </span>
-              <span className="font-extrabold text-white text-sm">
-                {winnerSummary.winners
-                  .map((w) => `[기호 ${w.symbolNumber}번] ${w.title}`)
-                  .join(' · ')}
-              </span>
-              <span className="text-amber-200 ml-1.5 font-semibold">
-                ({winnerSummary.percent}%, {winnerSummary.maxVotes}표)
-              </span>
+            <div className="flex items-center gap-3 min-w-0">
+              <Award className={`w-6 h-6 shrink-0 ${isClosed ? 'text-emerald-300' : 'text-amber-400'}`} />
+              <div className="text-xs min-w-0">
+                <span className={`font-bold ${isClosed ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {isClosed
+                    ? winnerSummary.isTie
+                      ? '🏆 최종 확정 결과 (공동 1위): '
+                      : '🏆 최종 확정 결과 (1위): '
+                    : winnerSummary.isTie
+                    ? '현재 공동 1위: '
+                    : '현재 1위 우세: '}
+                </span>
+                <span className="font-extrabold text-white text-sm">
+                  {winnerSummary.winners
+                    .map((w) => `[기호 ${w.symbolNumber}번] ${w.title}`)
+                    .join(' · ')}
+                </span>
+                <span className="text-amber-200 ml-1.5 font-semibold">
+                  ({winnerSummary.percent}%, {winnerSummary.maxVotes}표)
+                </span>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                setDocsTab('certificate');
+                setIsDocsModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs shadow-md shadow-amber-900/30 transition cursor-pointer shrink-0 active:scale-95"
+            >
+              <Trophy className="w-3.5 h-3.5" />
+              <span>🏆 당선증 · 개표공고문 이미지 발급</span>
+            </button>
           </div>
         ) : null}
 
@@ -700,6 +804,136 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Official Winner Certificate & Final Results Announcement PNG Export Modal */}
+      {isDocsModalOpen && (
+        <div
+          onClick={() => {
+            sounds.playClick();
+            setIsDocsModalOpen(false);
+          }}
+          className="fixed inset-0 z-[75] flex items-center justify-center p-3 sm:p-5 bg-slate-950/90 backdrop-blur-md"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl text-slate-100 flex flex-col animate-in fade-in zoom-in-95 duration-200"
+          >
+            {/* Sticky Header */}
+            <div className="sticky top-0 z-20 flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 bg-slate-900/95 backdrop-blur-md border-b border-slate-800">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0">
+                  <Trophy className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm sm:text-base font-extrabold text-white truncate">
+                    공식 당선증 · 개표 공고문 발급
+                  </h3>
+                  <p className="text-[11px] text-slate-400 truncate">
+                    1080×1350 고화질 PNG 이미지로 저장해 바로 공유하세요!
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setIsDocsModalOpen(false);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 hover:text-white text-xs font-bold transition cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+                <span>닫기</span>
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-4">
+              {/* 2 Style Switcher Tabs */}
+              <div className="grid grid-cols-2 gap-1.5 bg-slate-800/85 p-1 rounded-xl border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setDocsTab('certificate');
+                  }}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    docsTab === 'certificate'
+                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-sm'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <ScrollText className="w-3.5 h-3.5 shrink-0" />
+                  <span>📜 공식 당선증</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setDocsTab('announcement');
+                  }}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    docsTab === 'announcement'
+                      ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white shadow-sm'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5 shrink-0" />
+                  <span>📊 개표 결과 확정 공고문</span>
+                </button>
+              </div>
+
+              {/* WYSIWYG High-Res Preview Frame */}
+              <div className="relative w-full aspect-[4/5] rounded-xl overflow-hidden bg-slate-950 border border-slate-700/90 flex items-center justify-center shadow-inner">
+                {isGeneratingDoc || !previewDataUrl ? (
+                  <div className="flex flex-col items-center gap-2 text-slate-400 text-xs">
+                    <Sparkles className="w-6 h-6 text-amber-400 animate-pulse" />
+                    <span>고화질 공식 이미지 생성 중...</span>
+                  </div>
+                ) : (
+                  <img
+                    src={previewDataUrl}
+                    alt={
+                      docsTab === 'certificate'
+                        ? '보트버스 공식 당선증 미리보기'
+                        : '보트버스 개표 결과 확정 공고문 미리보기'
+                    }
+                    className="w-full h-full object-contain select-none"
+                  />
+                )}
+              </div>
+
+              {/* Download & Close Actions */}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadOfficialImage}
+                  disabled={isGeneratingDoc}
+                  className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-sm shadow-lg shadow-emerald-600/25 transition cursor-pointer active:scale-[0.98] disabled:opacity-60"
+                >
+                  <Download className="w-4 h-4 shrink-0" />
+                  <span>
+                    {docsTab === 'certificate'
+                      ? '📜 공식 당선증 PNG 저장'
+                      : '📊 개표 확정 공고문 PNG 저장'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setIsDocsModalOpen(false);
+                  }}
+                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold text-xs transition cursor-pointer"
+                >
+                  전광판으로 돌아가기
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

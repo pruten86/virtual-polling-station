@@ -17,16 +17,14 @@ import {
 } from '../data/presetPolls';
 import {
   fetchVoteversePolls,
-  createVoteversePoll,
   subscribeAllPollsRealtime,
   subscribeLobbyPresenceCounts,
   subscribePollsMetaRealtime,
-  ensureAnonymousAuth,
   unlockPollAdminSession,
   isPollOwnerOrAdmin,
   findPrivatePollByAccessCode,
 } from '../lib/voteverseBackend';
-import { getVoterUUID } from '../lib/supabase';
+import { CreatePollModal } from './CreatePollModal';
 import {
   Sparkles,
   Dices,
@@ -42,31 +40,22 @@ import {
   Plus,
   Trash2,
   AlertTriangle,
-  Sliders,
   Clock,
   Layers,
-  KeyRound,
   Pencil,
   X,
   BarChart3,
   Award,
+  Trophy,
 } from 'lucide-react';
 
 interface AvatarSelectModalProps {
   initialPollId?: string | null;
   externalPolls?: PollStation[];
   onPollsUpdated?: (polls: PollStation[]) => void;
-  onOpenResultsDirect?: (poll: PollStation) => void;
+  onOpenResultsDirect?: (poll: PollStation, openOfficialDocs?: boolean) => void;
   onEnter: (nickname: string, avatarType: AvatarType, selectedPoll: PollStation) => void;
 }
-
-const DURATION_OPTIONS = [
-  { hours: 1 / 60, label: '1분 후 (테스트)', display: '1분 후 마감 (테스트용)' },
-  { hours: 3 / 60, label: '3분 후', display: '3분 후 마감' },
-  { hours: 1, label: '1시간 후', display: '1시간 후 마감' },
-  { hours: 24, label: '1일 후', display: '1일 후 (24시간)' },
-  { hours: 168, label: '7일 후', display: '7일 후 (168시간)' },
-];
 
 export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   initialPollId,
@@ -187,22 +176,6 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   const [privateCode, setPrivateCode] = useState<string>('');
   const [privateCodeError, setPrivateCodeError] = useState<string | null>(null);
 
-  // Create New Poll Form State
-  const [newTitle, setNewTitle] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [isPrivateCreate, setIsPrivateCreate] = useState(false);
-  const [newPasscode, setNewPasscode] = useState(''); // Participant Access Code (4 digits)
-  const [newAdminPin, setNewAdminPin] = useState(''); // Creator Admin PIN (4 digits)
-  const [newMaxVoters, setNewMaxVoters] = useState<number>(100);
-  const [selectedDurationHours, setSelectedDurationHours] = useState<number>(24);
-  const [forbiddenKeywordError, setForbiddenKeywordError] = useState<string | null>(null);
-
-  const [newChoices, setNewChoices] = useState<Array<{ title: string; subtitle: string; party: string }>>([
-    { title: '선택지 1', subtitle: '첫 번째 대안', party: '기호 1번' },
-    { title: '선택지 2', subtitle: '두 번째 대안', party: '기호 2번' },
-    { title: '선택지 3', subtitle: '세 번째 대안', party: '기호 3번' },
-  ]);
-
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Admin PIN Auth Modal (for Edit / Delete)
@@ -231,16 +204,6 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   const [politicalAlertModal, setPoliticalAlertModal] = useState<{
     detectedKeyword: string;
   } | null>(null);
-
-  // Real-time Political Keyword Validation for Create Form
-  const createPoliticalCheck = useMemo(() => {
-    const textsToCheck = [
-      newTitle,
-      newDesc,
-      ...newChoices.map((c) => `${c.title} ${c.party} ${c.subtitle}`),
-    ];
-    return checkPoliticalContent(textsToCheck);
-  }, [newTitle, newDesc, newChoices]);
 
   // Real-time Political Keyword Validation for Edit Form
   const editPoliticalCheck = useMemo(() => {
@@ -273,21 +236,6 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     }, 2500);
   };
 
-  // Add choice in creation form (up to 10)
-  const handleAddChoice = () => {
-    if (newChoices.length >= 10) return;
-    sounds.playClick();
-    const nextNum = newChoices.length + 1;
-    setNewChoices([...newChoices, { title: `선택지 ${nextNum}`, subtitle: `상세 설명`, party: `기호 ${nextNum}번` }]);
-  };
-
-  // Remove choice (minimum 2)
-  const handleRemoveChoice = (idx: number) => {
-    if (newChoices.length <= 2) return;
-    sounds.playClick();
-    setNewChoices(newChoices.filter((_, i) => i !== idx));
-  };
-
   // Add choice in edit form (up to 10)
   const handleAddEditChoice = () => {
     if (editChoices.length >= 10) return;
@@ -301,108 +249,6 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
     if (editChoices.length <= 2) return;
     sounds.playClick();
     setEditChoices(editChoices.filter((_, i) => i !== idx));
-  };
-
-  // Handle Create Poll Submission with Admin PIN, Political Filter, Max Voters & Timer
-  const handleCreatePollSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setForbiddenKeywordError(null);
-
-    if (!newTitle.trim()) return;
-
-    // Check creator Admin PIN (must be 4 digits)
-    const cleanAdminPin = newAdminPin.trim();
-    if (!/^\d{4}$/.test(cleanAdminPin)) {
-      sounds.playClick();
-      setForbiddenKeywordError('개설자 관리 비밀번호 4자리(숫자)를 정확히 입력해주세요.');
-      return;
-    }
-
-    // Check participant access code if private
-    if (isPrivateCreate) {
-      const cleanPasscode = newPasscode.trim();
-      if (!/^\d{4}$/.test(cleanPasscode)) {
-        sounds.playClick();
-        setForbiddenKeywordError('참여자용 4자리 비밀 입장코드를 정확히 입력해주세요.');
-        return;
-      }
-    }
-
-    // Political and Real Election Keyword Check
-    if (createPoliticalCheck.hasForbidden) {
-      sounds.playClick();
-      setForbiddenKeywordError(
-        `⚠️ 민감한 정치인 성명 또는 정치 키워드('${createPoliticalCheck.keyword}')는 사용할 수 없습니다. 일상·모임 주제로 작성해 주세요.`
-      );
-      setPoliticalAlertModal({
-        detectedKeyword: createPoliticalCheck.keyword || '정치·선거',
-      });
-      return;
-    }
-
-    sounds.playClick();
-    const newId = `custom-${Date.now().toString(36)}`;
-    const colors = ['rose', 'blue', 'emerald', 'amber', 'purple', 'indigo', 'teal', 'orange', 'cyan', 'pink'];
-    const hexes = ['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#6366f1', '#14b8a6', '#f97316', '#06b6d4', '#ec4899'];
-
-    const formattedCandidates: Candidate[] = newChoices.map((c, idx) => ({
-      id: `${newId}-c${idx + 1}`,
-      symbolNumber: idx + 1,
-      party: c.party.trim() || `기호 ${idx + 1}번`,
-      title: c.title.trim() || `후보 ${idx + 1}`,
-      subtitle: c.subtitle.trim() || '선택지 설명',
-      badgeColor: colors[idx % colors.length],
-      accentBg: hexes[idx % hexes.length],
-      description: c.subtitle.trim() || '',
-      votes: 0,
-    }));
-
-    const finalCapacity = Math.max(2, Math.min(100, Number(newMaxVoters) || 100));
-    const expiresAt = Date.now() + selectedDurationHours * 3600 * 1000;
-    const creatorOwnerId = (await ensureAnonymousAuth()) || getVoterUUID();
-
-    const createdPoll: PollStation = {
-      id: newId,
-      title: newTitle.trim(),
-      description: newDesc.trim() || '참여형 자유 투표 안건',
-      category: isPrivateCreate ? 'private' : 'public',
-      accessCode: isPrivateCreate ? newPasscode.trim() : undefined,
-      adminPin: cleanAdminPin,
-      ownerId: creatorOwnerId,
-      maxVoters: finalCapacity,
-      candidates: formattedCandidates,
-      createdAt: new Date().toISOString().split('T')[0],
-      isCustom: true,
-      durationHours: selectedDurationHours,
-      expiresAt,
-    };
-
-    const res = await createVoteversePoll(createdPoll);
-    if (!res.success) {
-      sounds.playWarning();
-      setForbiddenKeywordError(res.error || '투표소 DB 저장에 실패했습니다. 다시 시도해주세요.');
-      return;
-    }
-
-    setPolls((prev) => [createdPoll, ...prev.filter((p) => p.id !== createdPoll.id)]);
-    setSelectedPollId(createdPoll.id);
-
-    // Creator is automatically authorized for their own newly created private room
-    if (isPrivateCreate) {
-      setUnlockedPrivatePollIds((prev) => new Set(prev).add(createdPoll.id));
-    }
-
-    setActiveTab(isPrivateCreate ? 'private' : 'public');
-
-    // Reset create fields
-    setNewTitle('');
-    setNewDesc('');
-    setIsPrivateCreate(false);
-    setNewPasscode('');
-    setNewAdminPin('');
-    setNewMaxVoters(100);
-    setSelectedDurationHours(24);
-    setForbiddenKeywordError(null);
   };
 
   // Join private poll with participant code (supports cross-device Supabase lookup)
@@ -906,10 +752,10 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Closed Poll Final Winner Summary Box */}
+                      {/* Closed Poll Final Winner Summary Box + Official Docs PNG Trigger */}
                       {isTimeClosed && (
-                        <div className="mt-2.5 px-2.5 py-2 rounded-lg bg-slate-900/85 border border-emerald-500/35 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0 text-[11px]">
+                        <div className="mt-2.5 px-2.5 py-2 rounded-lg bg-slate-900/85 border border-emerald-500/35 flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1 text-[11px]">
                             <Award className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                             {winnerSummary.hasVotes ? (
                               <span className="text-emerald-300 font-bold truncate">
@@ -921,9 +767,24 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                               </span>
                             )}
                           </div>
-                          <span className="text-[10px] text-slate-400 shrink-0">
-                            후보 {poll.candidates.length}개
-                          </span>
+                          {onOpenResultsDirect ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                sounds.playClick();
+                                onOpenResultsDirect(poll, true);
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[10px] font-bold transition cursor-pointer shrink-0"
+                            >
+                              <Trophy className="w-3 h-3 text-amber-300" />
+                              <span>당선증·공고문 저장</span>
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 shrink-0">
+                              후보 {poll.candidates.length}개
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1080,8 +941,24 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                               </div>
 
                               {isTimeClosed && isUnlocked && (
-                                <div className="mt-1.5 px-2 py-1 rounded bg-slate-900/80 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold truncate">
-                                  🏆 {winnerSummary.summaryText} ({totalVotes}/{maxCap}명 참여)
+                                <div className="mt-1.5 px-2 py-1.5 rounded bg-slate-900/80 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold flex items-center justify-between gap-2">
+                                  <span className="truncate">
+                                    🏆 {winnerSummary.summaryText} ({totalVotes}/{maxCap}명 참여)
+                                  </span>
+                                  {onOpenResultsDirect && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        sounds.playClick();
+                                        onOpenResultsDirect(p, true);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[9px] font-bold transition cursor-pointer shrink-0"
+                                    >
+                                      <Trophy className="w-2.5 h-2.5" />
+                                      <span>당선증·공고문</span>
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1094,278 +971,25 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
             </div>
           )}
 
-          {/* Tab 3: Create New Poll Station Form */}
+          {/* Tab 3: Create New Poll Station Form (5 One-Click Templates + Smart Party/Slogan Generator) */}
           {activeTab === 'create' && (
-            <form
-              onSubmit={handleCreatePollSubmit}
-              className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-3.5 space-y-3 max-h-64 overflow-y-auto"
-            >
-              {/* Forbidden Political Keyword Real-time Warning Banner */}
-              {(createPoliticalCheck.hasForbidden || forbiddenKeywordError) && (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-rose-950/90 border border-rose-500/70 text-rose-200 text-xs font-semibold animate-in fade-in duration-150">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>
-                    {createPoliticalCheck.hasForbidden
-                      ? `⚠️ 민감한 정치인 성명 또는 정치 키워드('${createPoliticalCheck.keyword}')는 사용할 수 없습니다. 일상·모임 주제로 작성해 주세요.`
-                      : forbiddenKeywordError}
-                  </span>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  새 안건 제목 *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="예: 금요일 조기 퇴근 vs 자율 출퇴근제"
-                  className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  안건 상세 설명
-                </label>
-                <input
-                  type="text"
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="예: 이번 분기 팀 조직문화 개선을 위한 모의투표"
-                  className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              {/* 1. Creator Admin PIN setting (4 digits - mandatory) */}
-              <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                    <span>개설자 관리 비밀번호 (숫자 4자리) *</span>
-                  </label>
-                  <span className="text-[10px] text-amber-400 font-bold">수정/삭제 권한 보호</span>
-                </div>
-                <input
-                  type="password"
-                  required
-                  maxLength={4}
-                  value={newAdminPin}
-                  onChange={(e) => setNewAdminPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="개설자 전용 4자리 숫자 (예: 1234)"
-                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs tracking-widest focus:outline-none focus:border-amber-400"
-                />
-                <p className="text-[10px] text-slate-400">
-                  ※ 투표소를 개설한 본인이 나중에 안건 내용을 수정하거나 즉시 삭제할 때 확인하는 비밀번호입니다.
-                </p>
-              </div>
-
-              {/* 2. Maximum Voters Capacity Setting (2 to 100) */}
-              <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>최대 참여 인원 (정원 설정)</span>
-                  </label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min={2}
-                      max={100}
-                      value={newMaxVoters}
-                      onChange={(e) => {
-                        const val = Math.max(2, Math.min(100, Number(e.target.value) || 2));
-                        setNewMaxVoters(val);
-                      }}
-                      className="w-14 px-1.5 py-0.5 bg-slate-800 border border-slate-600 rounded text-center text-xs font-bold text-emerald-400"
-                    />
-                    <span className="text-xs text-slate-400 font-semibold">명</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={2}
-                    max={100}
-                    value={newMaxVoters}
-                    onChange={(e) => setNewMaxVoters(Number(e.target.value))}
-                    className="flex-1 accent-emerald-500 cursor-pointer"
-                  />
-                </div>
-
-                {/* Quick Capacity Buttons */}
-                <div className="flex gap-1.5 pt-0.5">
-                  <span className="text-[10px] text-slate-500 self-center mr-1">빠른 선택:</span>
-                  {[10, 30, 50, 100].map((num) => (
-                    <button
-                      key={num}
-                      type="button"
-                      onClick={() => setNewMaxVoters(num)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
-                        newMaxVoters === num
-                          ? 'bg-emerald-500 text-white'
-                          : 'bg-slate-800 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {num}명
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 3. Duration / Timer Selection (1m test, 3m, 1h, 1d, 7d) */}
-              <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>투표 마감 시간 설정</span>
-                  </label>
-                  <span className="text-xs font-bold text-amber-400">
-                    {DURATION_OPTIONS.find((d) => Math.abs(d.hours - selectedDurationHours) < 0.001)?.display ||
-                      `${selectedDurationHours}시간 후 마감`}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-1">
-                  {DURATION_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      onClick={() => setSelectedDurationHours(opt.hours)}
-                      className={`py-1.5 px-1 rounded text-center text-[11px] font-bold transition cursor-pointer border ${
-                        Math.abs(selectedDurationHours - opt.hours) < 0.001
-                          ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
-                          : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-slate-400">
-                  설정한 시간이 지나면 투표가 자동 마감되며, 로비에서 최종 개표 결과를 바로 확인할 수 있습니다.
-                </p>
-              </div>
-
-              {/* Choices (2 to 10) */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[11px] font-bold text-slate-300">
-                    후보 선택지 ({newChoices.length}/10)
-                  </label>
-                  {newChoices.length < 10 ? (
-                    <button
-                      type="button"
-                      onClick={handleAddChoice}
-                      className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-semibold cursor-pointer active:scale-95 transition"
-                    >
-                      <Plus className="w-3 h-3" /> 선택지 추가
-                    </button>
-                  ) : (
-                    <span className="text-[10px] text-slate-400 font-medium">최대 10개까지 등록할 수 있습니다</span>
-                  )}
-                </div>
-
-                <div className="max-h-60 overflow-y-auto pr-1 space-y-1.5">
-                  {newChoices.map((choice, idx) => (
-                    <div key={idx} className="flex gap-1.5 items-center">
-                      <span className="w-5 h-5 rounded-md bg-slate-700 flex items-center justify-center text-[10px] font-bold shrink-0 text-slate-300">
-                        {idx + 1}
-                      </span>
-                      <input
-                        type="text"
-                        required
-                        value={choice.title}
-                        onChange={(e) => {
-                          const updated = [...newChoices];
-                          updated[idx].title = e.target.value;
-                          setNewChoices(updated);
-                        }}
-                        placeholder={`선택지 ${idx + 1} 제목`}
-                        className="flex-1 px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-md text-white text-xs"
-                      />
-                      <input
-                        type="text"
-                        value={choice.subtitle}
-                        onChange={(e) => {
-                          const updated = [...newChoices];
-                          updated[idx].subtitle = e.target.value;
-                          setNewChoices(updated);
-                        }}
-                        placeholder="상세 설명"
-                        className="flex-1 px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-md text-slate-300 text-xs hidden sm:block"
-                      />
-                      {newChoices.length > 2 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveChoice(idx)}
-                          className="p-1 text-slate-500 hover:text-rose-400 transition cursor-pointer"
-                          title="선택지 삭제"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Private Code Option Toggle */}
-              <div className="pt-2 border-t border-slate-700/60 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-300 font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={isPrivateCreate}
-                      onChange={(e) => setIsPrivateCreate(e.target.checked)}
-                      className="rounded text-emerald-500"
-                    />
-                    <span>비공개 투표소 (참여자 4자리 입장코드 필요)</span>
-                  </label>
-
-                  {isPrivateCreate && (
-                    <input
-                      type="text"
-                      maxLength={4}
-                      required
-                      value={newPasscode}
-                      onChange={(e) => setNewPasscode(e.target.value.replace(/\D/g, ''))}
-                      placeholder="입장코드 (예: 7788)"
-                      className="w-28 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-center text-xs font-mono font-bold text-amber-300 tracking-widest"
-                    />
-                  )}
-                </div>
-                {isPrivateCreate && (
-                  <p className="text-[10px] text-amber-300/80">
-                    ※ 참여 입장코드는 참가자들에게 전달하는 번호이며, 안건 수정/삭제 비밀번호(관리 PIN)와 분리 운영됩니다.
-                  </p>
-                )}
-              </div>
-
-              {/* Warning above button if forbidden keyword detected */}
-              {createPoliticalCheck.hasForbidden && (
-                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-rose-950/80 border border-rose-500/60 text-rose-300 text-[11px] font-semibold">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span>민감한 정치인 성명 또는 정치 키워드('{createPoliticalCheck.keyword}')가 포함되어 있어 개설할 수 없습니다.</span>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={createPoliticalCheck.hasForbidden || !newTitle.trim()}
-                className={`w-full py-2.5 font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${
-                  createPoliticalCheck.hasForbidden || !newTitle.trim()
-                    ? 'bg-slate-800 text-slate-500 border border-slate-700/60 cursor-not-allowed opacity-80'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-md shadow-emerald-900/30 active:scale-98'
-                }`}
-              >
-                {createPoliticalCheck.hasForbidden
-                  ? `개설 불가 (금칙어 '${createPoliticalCheck.keyword}' 감지)`
-                  : '새 투표소 개설 완료'}
-              </button>
-            </form>
+            <CreatePollModal
+              onCreated={(createdPoll) => {
+                setPolls((prev) => {
+                  const next = [createdPoll, ...prev.filter((p) => p.id !== createdPoll.id)];
+                  onPollsUpdated?.(next);
+                  return next;
+                });
+                setSelectedPollId(createdPoll.id);
+                if (createdPoll.category === 'private') {
+                  setUnlockedPrivatePollIds((prev) => new Set(prev).add(createdPoll.id));
+                }
+                setActiveTab(createdPoll.category === 'private' ? 'private' : 'public');
+              }}
+              onPoliticalAlert={(detectedKeyword) => {
+                setPoliticalAlertModal({ detectedKeyword });
+              }}
+            />
           )}
         </div>
 

@@ -223,7 +223,10 @@ export default function App() {
   const [isResultsOpen, setIsResultsOpen] = useState<boolean>(false);
   const [isCertificateOpen, setIsCertificateOpen] = useState<boolean>(false);
   const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
-  const [lobbyResultsPoll, setLobbyResultsPoll] = useState<PollStation | null>(null);
+  const [lobbyResultsPoll, setLobbyResultsPoll] = useState<{
+    poll: PollStation;
+    openOfficialDocs?: boolean;
+  } | null>(null);
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
 
   // Interaction & Nearby Detection
@@ -885,7 +888,9 @@ export default function App() {
         setIsBallotPaperOpen(false);
       }
       setLobbyResultsPoll((prev) =>
-        prev && prev.id === pollToClose.id ? { ...prev, expiresAt: res.expiresAt } : prev
+        prev && prev.poll.id === pollToClose.id
+          ? { ...prev, poll: { ...prev.poll, expiresAt: res.expiresAt } }
+          : prev
       );
       setNowTs(Date.now());
       sounds.playChime();
@@ -1700,15 +1705,17 @@ export default function App() {
           initialPollId={currentPoll.id}
           externalPolls={allPolls}
           onPollsUpdated={handlePollsUpdated}
-          onOpenResultsDirect={(poll) => {
-            setLobbyResultsPoll(poll);
+          onOpenResultsDirect={(poll, openOfficialDocs) => {
+            setLobbyResultsPoll({ poll, openOfficialDocs });
             fetchPollTalliesFromDB(poll.id, poll.candidates).then((fresh) => {
               if (!fresh) return;
               setAllPolls((prev) =>
                 prev.map((p) => (p.id === poll.id ? { ...p, candidates: fresh } : p))
               );
               setLobbyResultsPoll((prev) =>
-                prev && prev.id === poll.id ? { ...prev, candidates: fresh } : prev
+                prev && prev.poll.id === poll.id
+                  ? { ...prev, poll: { ...prev.poll, candidates: fresh } }
+                  : prev
               );
             });
           }}
@@ -1719,7 +1726,7 @@ export default function App() {
       {/* 1-B. Direct Results Modal opened from Lobby Card */}
       {lobbyResultsPoll && (() => {
         const syncedLobbyPoll =
-          allPolls.find((p) => p.id === lobbyResultsPoll.id) || lobbyResultsPoll;
+          allPolls.find((p) => p.id === lobbyResultsPoll.poll.id) || lobbyResultsPoll.poll;
         const isLobbyPollClosed = Boolean(
           syncedLobbyPoll.expiresAt && syncedLobbyPoll.expiresAt <= nowTs
         );
@@ -1739,6 +1746,7 @@ export default function App() {
             isClosed={isLobbyPollClosed}
             canClosePoll={canCloseLobbyPoll}
             isLobbyDirectView
+            initialOpenOfficialDocs={Boolean(lobbyResultsPoll.openOfficialDocs)}
             onClosePollNow={
               canCloseLobbyPoll ? () => handleClosePollNow(syncedLobbyPoll) : undefined
             }
