@@ -129,239 +129,295 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   return (
     <div className="absolute inset-0 z-20 pointer-events-none select-none overflow-hidden">
       {/* Top Header / Progress Timeline */}
-      <div className="absolute top-2.5 sm:top-3 inset-x-2.5 sm:inset-x-8 flex flex-col items-center pointer-events-auto transition-all">
-        <div className="w-full max-w-4xl bg-slate-900/90 border border-slate-700/80 rounded-2xl shadow-xl p-2 sm:p-3.5 backdrop-blur-md transition-all duration-200">
-          {/* Top Info Bar: Flex wrap container to prevent button crowding and text splitting */}
-          <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 sm:gap-2 px-0.5 sm:px-1 text-xs">
-            {/* Left Brand and Channel / Voter Count Badge */}
-            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-wrap sm:flex-nowrap">
-              <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-rose-500/20 border border-rose-500/50 text-rose-400 font-black text-[11px] shrink-0">
+      <div className="absolute top-1 left-1.5 right-1.5 sm:top-3 sm:left-8 sm:right-8 flex flex-col items-center pointer-events-auto transition-all">
+        {isTopCollapsed ? (
+          /* Collapsed State: Single-Line Ultra-Slim Mini Bar */
+          <div className="w-full max-w-4xl bg-slate-900/92 border border-slate-700/80 rounded-full shadow-lg px-2.5 py-1 sm:px-3.5 sm:py-1.5 backdrop-blur-md flex items-center justify-between gap-1.5 sm:gap-2.5 animate-in fade-in duration-150">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-rose-500/20 border border-rose-500/50 text-rose-400 font-black text-[10px] shrink-0">
                 卜
               </span>
-              <span className="font-extrabold text-white text-xs sm:text-sm whitespace-nowrap shrink-0 tracking-tight">
-                보트버스 VOTEVERSE
-              </span>
-
-              {/* 1. Official 100-voter channel badge or custom voter count with whitespace-nowrap & shrink-0 */}
-              {isOfficial ? (
-                <span className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/40 whitespace-nowrap shrink-0">
-                  <Layers className="w-3 h-3 text-sky-400 shrink-0" />
-                  {/* Compact on mobile, full detail on larger screens */}
-                  <span className="sm:hidden">
-                    제{activeChannelIndex}투표소 · {channelVotes}/100명
-                  </span>
-                  <span className="hidden sm:inline">
-                    제{activeChannelIndex}투표소 · {channelVotes} / 100명 (누적 {cumulativeVotes}명)
-                  </span>
-                </span>
-              ) : (
-                totalVoters !== undefined && (
-                  <span
-                    className={`inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-semibold border whitespace-nowrap shrink-0 ${
-                      totalVoters >= (maxVoters || 100)
-                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/30 font-bold'
-                        : 'bg-slate-800 text-emerald-300 border-slate-700'
-                    }`}
-                  >
-                    <span className="sm:hidden">
-                      참여 {totalVoters}/{maxVoters || 100}명
-                      {totalVoters >= (maxVoters || 100) && ' (마감)'}
-                    </span>
-                    <span className="hidden sm:inline">
-                      참여 {totalVoters} / {maxVoters || 100}명
-                      {totalVoters >= (maxVoters || 100) && ' (정원 마감)'}
-                    </span>
-                  </span>
-                )
-              )}
-
-              {/* Concurrent Online Users Badge + Live WebSocket Connection Status */}
-              <span className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 whitespace-nowrap shrink-0">
-                <span>동시 접속 {onlineCount}명</span>
-              </span>
               <span
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold border whitespace-nowrap shrink-0 ${
-                  isRealtimeConnected
-                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
-                    : 'bg-amber-950/80 text-amber-300 border-amber-500/40'
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap shrink-0 ${
+                  isClosed
+                    ? 'bg-rose-500/20 border-rose-400/40 text-rose-200'
+                    : 'bg-sky-500/20 border-sky-400/40 text-sky-300'
                 }`}
               >
-                <span>{isRealtimeConnected ? '🟢 실시간 연결됨' : '🟡 재연결 중'}</span>
+                {isClosed
+                  ? '🏁 개표참관'
+                  : `${currentStep}/4 ${steps[currentStep - 1]?.title || ''}`}
               </span>
-
-              <span className="text-slate-400 hidden lg:inline shrink-0">| 선거인:</span>
-              <span className="text-sky-300 font-semibold hidden lg:inline truncate max-w-[180px]">
-                {nickname}
+              <span className="text-[11px] sm:text-xs font-bold text-white truncate min-w-0">
+                {pollTitle || '보트버스 VOTEVERSE'}
               </span>
             </div>
 
-            {/* 2. Right action buttons container with flex-wrap gap-1.5 for clean mobile multi-row arrangement */}
-            <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap sm:flex-nowrap shrink-0 ml-auto">
-              {onOpenLobby && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    sounds.playClick();
-                    onOpenLobby();
-                  }}
-                  className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-sky-500/20 border border-sky-400/40 text-sky-200 font-bold hover:bg-sky-500/30 transition cursor-pointer text-[10px] sm:text-xs whitespace-nowrap shrink-0"
-                  title="다른 투표소 안건 선택 로비로 이동"
-                >
-                  <Vote className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-                  <span className="sm:hidden">다른 투표소</span>
-                  <span className="hidden sm:inline">다른 투표소 가기</span>
-                </button>
-              )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isRealtimeConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
+                <span>실시간 {onlineCount}명</span>
+              </span>
 
-              {hasVoted && (
-                <button
-                  type="button"
-                  onClick={onOpenCertificate}
-                  className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold hover:bg-emerald-500/30 transition cursor-pointer text-[10px] sm:text-xs whitespace-nowrap shrink-0"
-                  title="디지털 투표확인증 열기"
-                >
-                  <FileCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-                  <span>투표확인증</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setShowHelp(!showHelp)}
-                className="p-1 text-slate-400 hover:text-slate-200 transition cursor-pointer rounded-lg hover:bg-slate-800 shrink-0"
-                title="조작법 안내"
-                aria-label="조작법 안내"
-              >
-                <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </button>
-
-              {/* 3. Top HUD Collapse / Expand Toggle Button (▲ / ▼) */}
               <button
                 type="button"
                 onClick={() => {
                   sounds.playClick();
-                  setIsTopCollapsed((prev) => !prev);
+                  setIsTopCollapsed(false);
                 }}
-                className="p-1 sm:p-1.5 text-slate-300 hover:text-white transition cursor-pointer rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700/80 shrink-0"
-                title={isTopCollapsed ? '상단 진행 단계 펼치기' : '상단 메뉴 한 줄로 접기 (시네마 뷰)'}
-                aria-label={isTopCollapsed ? '상단 진행 단계 펼치기' : '상단 메뉴 한 줄로 접기'}
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 sm:py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600/90 text-[10px] sm:text-[11px] font-bold text-sky-300 hover:text-white transition cursor-pointer whitespace-nowrap shrink-0"
+                title="상단 메뉴 펼치기"
               >
-                {isTopCollapsed ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-sky-400" />
-                ) : (
-                  <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
-                )}
+                <ChevronDown className="w-3 h-3 text-sky-400 shrink-0" />
+                <span className="sm:hidden">메뉴 펼치기</span>
+                <span className="hidden sm:inline">상단 메뉴 펼치기</span>
               </button>
             </div>
           </div>
+        ) : (
+          /* Expanded State: Compact Top Card + Centered Collapse Capsule Tab Below */
+          <>
+            <div className="w-full max-w-4xl bg-slate-900/90 border border-slate-700/80 rounded-2xl shadow-xl p-2 sm:p-3 backdrop-blur-md transition-all duration-200">
+              {/* Row 1: Single-Line Compact Header ([卜 보트버스] + [제1투표소 · 실시간 N명] + [다른 투표소] + [?]) */}
+              <div className="flex items-center justify-between gap-1 sm:gap-2 px-0.5 text-xs flex-nowrap">
+                {/* Left Brand and Channel / Live Online Count */}
+                <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-nowrap">
+                  <span className="inline-flex items-center justify-center w-4 h-4 sm:w-5 sm:h-5 rounded-md bg-rose-500/20 border border-rose-500/50 text-rose-400 font-black text-[10px] sm:text-[11px] shrink-0">
+                    卜
+                  </span>
+                  <span className="font-extrabold text-white text-[11px] sm:text-sm whitespace-nowrap shrink-0 tracking-tight">
+                    <span className="sm:hidden">보트버스</span>
+                    <span className="hidden sm:inline">보트버스 VOTEVERSE</span>
+                  </span>
 
-          {/* Active Poll Title Strip (Always readable without truncation on mobile & PC) */}
-          {pollTitle && (
-            <div className="mt-1.5 px-2.5 py-1 rounded-lg bg-slate-800/75 border border-slate-700/70 flex items-start gap-1.5">
-              <span className="text-[10px] sm:text-[11px] font-bold text-sky-400 shrink-0">
-                현재 안건
-              </span>
-              <span className="text-[11px] sm:text-xs font-bold text-white whitespace-normal break-keep break-words leading-snug">
-                {pollTitle}
-              </span>
-            </div>
-          )}
+                  {/* Mobile Compact Single Pill: Channel/Participation + Live Green Dot + Count */}
+                  <span
+                    className={`sm:hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap shrink-0 ${
+                      isOfficial
+                        ? 'bg-sky-500/20 text-sky-200 border-sky-400/40'
+                        : totalVoters !== undefined && totalVoters >= (maxVoters || 100)
+                        ? 'bg-rose-500/20 text-rose-200 border-rose-500/40'
+                        : 'bg-slate-800/90 text-emerald-200 border-slate-700'
+                    }`}
+                  >
+                    <span>
+                      {isOfficial
+                        ? `제${activeChannelIndex}투표소 ·`
+                        : `${totalVoters ?? 0}/${maxVoters || 100}명 ·`}
+                    </span>
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        isRealtimeConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span className="text-emerald-300">실시간 {onlineCount}명</span>
+                  </span>
 
-          {/* Closed / Observer Mode Summary Banner */}
-          {isClosed && (
-            <div className="mt-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-emerald-950/80 border border-rose-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 min-w-0">
-                <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0 self-start sm:self-auto">
-                  🏁 투표 마감 · 개표 참관 모드
-                </span>
-                <span className="text-emerald-300 font-bold whitespace-normal break-keep break-words leading-snug">
-                  {winnerSummaryText || '개표 완료'}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  onOpenResults();
-                }}
-                className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer whitespace-nowrap shrink-0 self-end sm:self-auto"
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>최종 개표결과 보기</span>
-              </button>
-            </div>
-          )}
-
-          {/* 4-Step Process Pipeline: Shown when !isTopCollapsed */}
-          {!isTopCollapsed && (
-            <div className="grid grid-cols-4 gap-1 sm:gap-2.5 text-center mt-2 pt-2 border-t border-slate-800/80 animate-in fade-in duration-150">
-              {steps.map((s) => {
-                const isPast = s.num < currentStep;
-                const isCurrent = s.num === currentStep;
-                const isResultsTab = s.num === 4;
-
-                const cardClasses = `p-1.5 sm:p-2 rounded-xl border transition-all ${
-                  isCurrent
-                    ? 'bg-sky-500/15 border-sky-400 text-sky-200 ring-1 ring-sky-400/30 shadow-sm'
-                    : isPast
-                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                    : 'bg-slate-800/40 border-slate-700/60 text-slate-400'
-                } ${
-                  isResultsTab
-                    ? 'cursor-pointer hover:bg-sky-500/25 hover:border-sky-300 active:scale-95'
-                    : ''
-                }`;
-
-                const innerContent = (
-                  <>
-                    <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5">
+                  {/* Desktop Detailed Badges */}
+                  {isOfficial ? (
+                    <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/40 whitespace-nowrap shrink-0">
+                      <Layers className="w-3 h-3 text-sky-400 shrink-0" />
+                      <span>
+                        제{activeChannelIndex}투표소 · {channelVotes} / 100명 (누적 {cumulativeVotes}명)
+                      </span>
+                    </span>
+                  ) : (
+                    totalVoters !== undefined && (
                       <span
-                        className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center text-[9px] sm:text-[10px] font-bold ${
-                          isCurrent
-                            ? 'bg-sky-500 text-white'
-                            : isPast
-                            ? 'bg-emerald-500 text-white'
-                            : 'bg-slate-700 text-slate-300'
+                        className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border whitespace-nowrap shrink-0 ${
+                          totalVoters >= (maxVoters || 100)
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30 font-bold'
+                            : 'bg-slate-800 text-emerald-300 border-slate-700'
                         }`}
                       >
-                        {s.num}
+                        참여 {totalVoters} / {maxVoters || 100}명
+                        {totalVoters >= (maxVoters || 100) && ' (정원 마감)'}
                       </span>
-                      <span className="text-[11px] sm:text-xs font-bold text-white truncate">
-                        {s.title}
-                      </span>
-                    </div>
-                    <p className="text-[9px] sm:text-[10px] text-slate-400 hidden sm:block truncate">
-                      {isResultsTab ? '터치하여 전광판 열기' : s.sub}
-                    </p>
-                  </>
-                );
+                    )
+                  )}
 
-                if (isResultsTab) {
-                  return (
+                  <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 whitespace-nowrap shrink-0">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        isRealtimeConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span>실시간 {onlineCount}명</span>
+                  </span>
+
+                  <span className="text-slate-400 hidden lg:inline shrink-0">| 선거인:</span>
+                  <span className="text-sky-300 font-semibold hidden lg:inline truncate max-w-[160px]">
+                    {nickname}
+                  </span>
+                </div>
+
+                {/* Right Action Buttons (Compact Single Line) */}
+                <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap ml-auto">
+                  {onOpenLobby && (
                     <button
-                      key={s.num}
                       type="button"
                       onClick={() => {
                         sounds.playClick();
-                        onOpenResults();
+                        onOpenLobby();
                       }}
-                      className={cardClasses}
-                      title="개표 전광판 및 방명록 열기"
+                      className="flex items-center gap-1 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-sky-500/20 border border-sky-400/40 text-sky-200 font-bold hover:bg-sky-500/30 transition cursor-pointer text-[10px] sm:text-xs whitespace-nowrap shrink-0"
+                      title="다른 투표소 안건 선택 로비로 이동"
                     >
-                      {innerContent}
+                      <Vote className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                      <span className="sm:hidden">다른 투표소</span>
+                      <span className="hidden sm:inline">다른 투표소 가기</span>
                     </button>
-                  );
-                }
+                  )}
 
-                return (
-                  <div key={s.num} className={cardClasses}>
-                    {innerContent}
+                  {hasVoted && (
+                    <button
+                      type="button"
+                      onClick={onOpenCertificate}
+                      className="flex items-center gap-1 px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold hover:bg-emerald-500/30 transition cursor-pointer text-[10px] sm:text-xs whitespace-nowrap shrink-0"
+                      title="디지털 투표확인증 열기"
+                    >
+                      <FileCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                      <span className="sm:hidden">확인증</span>
+                      <span className="hidden sm:inline">투표확인증</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowHelp(!showHelp)}
+                    className="p-0.5 sm:p-1 text-slate-400 hover:text-slate-200 transition cursor-pointer rounded-lg hover:bg-slate-800 shrink-0"
+                    title="조작법 안내"
+                    aria-label="조작법 안내"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Poll Title Strip (Always readable without truncation on mobile & PC) */}
+              {pollTitle && (
+                <div className="mt-1 sm:mt-1.5 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-800/75 border border-slate-700/70 flex items-start gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-sky-400 shrink-0">
+                    현재 안건
+                  </span>
+                  <span className="text-[11px] sm:text-xs font-bold text-white whitespace-normal break-keep break-words leading-snug">
+                    {pollTitle}
+                  </span>
+                </div>
+              )}
+
+              {/* Closed / Observer Mode Summary Banner */}
+              {isClosed && (
+                <div className="mt-1 sm:mt-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-emerald-950/80 border border-rose-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 min-w-0">
+                    <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0 self-start sm:self-auto">
+                      🏁 투표 마감 · 개표 참관 모드
+                    </span>
+                    <span className="text-emerald-300 font-bold text-[11px] sm:text-xs whitespace-normal break-keep break-words leading-snug">
+                      {winnerSummaryText || '개표 완료'}
+                    </span>
                   </div>
-                );
-              })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      onOpenResults();
+                    }}
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer whitespace-nowrap shrink-0 self-end sm:self-auto"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span>최종 개표결과 보기</span>
+                  </button>
+                </div>
+              )}
+
+              {/* 4-Step Process Pipeline */}
+              <div className="grid grid-cols-4 gap-1 sm:gap-2 text-center mt-1.5 pt-1.5 sm:mt-2 sm:pt-2 border-t border-slate-800/80 animate-in fade-in duration-150">
+                {steps.map((s) => {
+                  const isPast = s.num < currentStep;
+                  const isCurrent = s.num === currentStep;
+                  const isResultsTab = s.num === 4;
+
+                  const cardClasses = `p-1 sm:p-1.5 rounded-lg sm:rounded-xl border transition-all ${
+                    isCurrent
+                      ? 'bg-sky-500/15 border-sky-400 text-sky-200 ring-1 ring-sky-400/30 shadow-sm'
+                      : isPast
+                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                      : 'bg-slate-800/40 border-slate-700/60 text-slate-400'
+                  } ${
+                    isResultsTab
+                      ? 'cursor-pointer hover:bg-sky-500/25 hover:border-sky-300 active:scale-95'
+                      : ''
+                  }`;
+
+                  const innerContent = (
+                    <>
+                      <div className="flex items-center justify-center gap-0.5 sm:gap-1.5">
+                        <span
+                          className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center text-[9px] sm:text-[10px] font-bold shrink-0 ${
+                            isCurrent
+                              ? 'bg-sky-500 text-white'
+                              : isPast
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {s.num}
+                        </span>
+                        <span className="text-[10px] sm:text-xs font-bold text-white whitespace-nowrap">
+                          {s.title}
+                        </span>
+                      </div>
+                      <p className="text-[9px] sm:text-[10px] text-slate-400 hidden sm:block truncate mt-0.5">
+                        {isResultsTab ? '터치하여 전광판 열기' : s.sub}
+                      </p>
+                    </>
+                  );
+
+                  if (isResultsTab) {
+                    return (
+                      <button
+                        key={s.num}
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          onOpenResults();
+                        }}
+                        className={cardClasses}
+                        title="개표 전광판 및 방명록 열기"
+                      >
+                        {innerContent}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div key={s.num} className={cardClasses}>
+                      {innerContent}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Capsule Collapse Tab Attached Directly Below Top HUD */}
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                setIsTopCollapsed(true);
+              }}
+              className="flex items-center gap-1 px-3 py-0.5 sm:py-1 rounded-b-xl bg-slate-900/90 border-b border-x border-slate-700/80 text-[10px] sm:text-[11px] font-semibold text-slate-300 hover:text-white backdrop-blur-sm transition cursor-pointer shadow-md"
+            >
+              <ChevronUp className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400" />
+              <span>상단 메뉴 접기</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Bottom-Center Zone Action Trigger Prompt (positioned cleanly above joystick & bottom dock) */}
