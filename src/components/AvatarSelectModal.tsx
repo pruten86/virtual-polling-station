@@ -13,6 +13,10 @@ import {
   checkPoliticalContent,
   formatRemainingTime,
   isPollExpired,
+  isPollPermanent,
+  computeOfficialStationNumber,
+  formatClosedDateTimeKorean,
+  formatScheduledDeadlineKorean,
   getPollWinnerSummary,
 } from '../data/presetPolls';
 import {
@@ -24,7 +28,7 @@ import {
   isPollOwnerOrAdmin,
   findPrivatePollByAccessCode,
 } from '../lib/voteverseBackend';
-import { CreatePollModal } from './CreatePollModal';
+import { CreatePollModal, PollDurationSelector } from './CreatePollModal';
 import {
   Sparkles,
   Dices,
@@ -192,6 +196,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   const [editDesc, setEditDesc] = useState('');
   const [editMaxVoters, setEditMaxVoters] = useState(100);
   const [editDurationHours, setEditDurationHours] = useState(24);
+  const [editDurationTouched, setEditDurationTouched] = useState(false);
   const [editChoices, setEditChoices] = useState<Array<{ title: string; subtitle: string; party: string }>>([]);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -325,6 +330,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
         setEditDesc(targetPoll.description);
         setEditMaxVoters(targetPoll.maxVoters || 100);
         setEditDurationHours(targetPoll.durationHours || 24);
+        setEditDurationTouched(false);
         setEditChoices(
           targetPoll.candidates.map((c) => ({
             title: c.title,
@@ -378,18 +384,45 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
       };
     });
 
+    const updatedExpiresAt = editDurationTouched
+      ? Date.now() + editDurationHours * 3600 * 1000
+      : editingPoll.expiresAt;
+
+    if (updatedExpiresAt && updatedExpiresAt > Date.now()) {
+      try {
+        const raw = localStorage.getItem('vps_closed_polls_v1');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && editingPoll.id in parsed) {
+            delete parsed[editingPoll.id];
+            localStorage.setItem('vps_closed_polls_v1', JSON.stringify(parsed));
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const updatedPoll: PollStation = {
       ...editingPoll,
       title: editTitle.trim(),
       description: editDesc.trim(),
       maxVoters: Math.max(2, Math.min(100, Number(editMaxVoters) || 100)),
       durationHours: editDurationHours,
+      expiresAt: updatedExpiresAt,
       candidates: updatedCandidates,
     };
 
     savePollAsync(updatedPoll);
-    setPolls((prev) => prev.map((p) => (p.id === updatedPoll.id ? updatedPoll : p)));
+    setPolls((prev) => {
+      const next = prev.map((p) => (p.id === updatedPoll.id ? updatedPoll : p));
+      queueMicrotask(() => {
+        onPollsUpdated?.(next);
+      });
+      return next;
+    });
     setEditingPoll(null);
+    setEditDurationTouched(false);
   };
 
   // Verify participant access code for private poll entrance
@@ -442,9 +475,10 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   let selectedPollCapacity = selectedPoll.maxVoters || 100;
   let selectedPollChannelLabel = '';
 
+  const selectedLiveCount = livePresenceCounts[selectedPoll.id] || 0;
   if (selectedPoll.isOfficial) {
     const dbTotal = selectedPoll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
-    const activeChannelIndex = Math.floor(dbTotal / 100) + 1;
+    const activeChannelIndex = computeOfficialStationNumber(dbTotal, selectedLiveCount);
     const channelVotes = dbTotal % 100;
     selectedPollDisplayTotal = dbTotal;
     selectedPollChannelLabel = `제${activeChannelIndex}투표소 • ${channelVotes} / 100명 (누적 ${dbTotal}명)`;
@@ -589,18 +623,20 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                   const isCopied = copiedId === poll.id;
                   const totalVotes = poll.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
                   const liveCount = livePresenceCounts[poll.id] || 0;
+                  const isPermanent = isPollPermanent(poll);
                   const isTimeClosed = isPollExpired(poll);
                   const winnerSummary = getPollWinnerSummary(poll.candidates);
+                  const closedTimeText = formatClosedDateTimeKorean(poll.expiresAt);
 
                   let channelBadge = '';
                   let voterDetailText = '';
                   let isFull = false;
 
                   if (poll.isOfficial) {
-                    const activeChannelIndex = Math.floor(totalVotes / 100) + 1;
+                    const activeChannelIndex = computeOfficialStationNumber(totalVotes, liveCount);
                     const channelVotes = totalVotes % 100;
                     channelBadge = `제${activeChannelIndex}투표소`;
-                    voterDetailText = `${channelBadge} (${channelVotes}/100명)`;
+                    voterDetailText = `${channelBadge} • ${channelVotes} / 100명 (누적 ${totalVotes}명)`;
                     isFull = false;
                   } else {
                     const maxCap = poll.maxVoters || 100;
@@ -608,7 +644,7 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                     voterDetailText = `정원 ${maxCap}명`;
                   }
 
-                  const remainingTimeStr = formatRemainingTime(poll.expiresAt);
+                  const remainingTimeStr = formatRemainingTime(poll.expiresAt, isPermanent);
 
                   return (
                     <div
@@ -640,8 +676,19 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                           )}
 
                           {isTimeClosed ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50 whitespace-nowrap shrink-0">
-                              🏁 투표 마감 · 개표 완료
+                            <>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50 whitespace-nowrap shrink-0">
+                                🏁 투표 마감 · 개표 완료
+                              </span>
+                              {poll.expiresAt && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900/90 text-rose-300 border border-rose-500/40 whitespace-nowrap shrink-0">
+                                  🕒 {closedTimeText}
+                                </span>
+                              )}
+                            </>
+                          ) : isPermanent ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 whitespace-nowrap shrink-0">
+                              ♾️ 상시 운영 (기한 제한 없음)
                             </span>
                           ) : isFull ? (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 whitespace-nowrap shrink-0">
@@ -676,17 +723,27 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                             <span>🟢 현재 접속 {liveCount}명</span>
                           </span>
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-bold whitespace-nowrap shrink-0">
-                            <span>🗳️ 누적 투표 {totalVotes}명</span>
+                            <span>🗳️ {poll.isOfficial ? voterDetailText : `누적 투표 ${totalVotes}명`}</span>
                           </span>
-                          <span className="text-slate-400 whitespace-nowrap shrink-0">{voterDetailText}</span>
-                          <span
-                            className={`flex items-center gap-1 font-semibold whitespace-nowrap shrink-0 ${
-                              isTimeClosed ? 'text-rose-300' : 'text-amber-300/90'
-                            }`}
-                          >
-                            <Clock className="w-3 h-3 shrink-0" />
-                            <span>{remainingTimeStr}</span>
-                          </span>
+                          {!poll.isOfficial && (
+                            <span className="text-slate-400 whitespace-nowrap shrink-0">{voterDetailText}</span>
+                          )}
+                          {!isPermanent && (
+                            <span
+                              className={`flex items-center gap-1 font-semibold whitespace-nowrap shrink-0 ${
+                                isTimeClosed ? 'text-rose-300' : 'text-amber-300/90'
+                              }`}
+                            >
+                              <Clock className="w-3 h-3 shrink-0" />
+                              <span>
+                                {isTimeClosed
+                                  ? closedTimeText
+                                  : poll.expiresAt
+                                  ? `${remainingTimeStr} (${formatScheduledDeadlineKorean(poll.expiresAt)})`
+                                  : remainingTimeStr}
+                              </span>
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
@@ -764,15 +821,22 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         <div className="mt-1 px-2.5 py-2 rounded-lg bg-slate-900/85 border border-emerald-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <div className="flex items-start gap-1.5 text-[11px] min-w-0">
                             <Award className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                            {winnerSummary.hasVotes ? (
-                              <span className="text-emerald-300 font-bold whitespace-normal break-keep break-words leading-snug">
-                                최종 결과 · {winnerSummary.summaryText}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 font-semibold whitespace-normal break-keep break-words leading-snug">
-                                최종 결과 · 투표 없음 (0표)
-                              </span>
-                            )}
+                            <div className="space-y-0.5 min-w-0">
+                              {winnerSummary.hasVotes ? (
+                                <span className="text-emerald-300 font-bold whitespace-normal break-keep break-words leading-snug block">
+                                  최종 결과 · {winnerSummary.summaryText}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 font-semibold whitespace-normal break-keep break-words leading-snug block">
+                                  최종 결과 · 투표 없음 (0표)
+                                </span>
+                              )}
+                              {poll.expiresAt && (
+                                <span className="text-[10px] text-rose-300/90 font-semibold block">
+                                  🕒 {closedTimeText}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {onOpenResultsDirect ? (
                             <button
@@ -851,7 +915,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                           const maxCap = p.maxVoters || 100;
                           const isFull = totalVotes >= maxCap;
                           const isTimeClosed = isPollExpired(p);
-                          const remainingStr = formatRemainingTime(p.expiresAt);
+                          const remainingStr = formatRemainingTime(p.expiresAt, isPollPermanent(p));
+                          const closedTimeStr = formatClosedDateTimeKorean(p.expiresAt);
                           const winnerSummary = getPollWinnerSummary(p.candidates);
 
                           return (
@@ -878,9 +943,16 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                     {p.title}
                                   </span>
                                   {isTimeClosed ? (
-                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40 whitespace-nowrap shrink-0">
-                                      🏁 투표 마감 · 개표 완료
-                                    </span>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40 whitespace-nowrap shrink-0">
+                                        🏁 투표 마감 · 개표 완료
+                                      </span>
+                                      {p.expiresAt && (
+                                        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-900/90 text-rose-300 border border-rose-500/35 whitespace-nowrap shrink-0">
+                                          🕒 {closedTimeStr}
+                                        </span>
+                                      )}
+                                    </div>
                                   ) : isFull ? (
                                     <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 whitespace-nowrap shrink-0">
                                       마감
@@ -897,8 +969,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                   <span className="text-[10px] text-sky-300 font-bold whitespace-nowrap shrink-0">
                                     🗳️ {totalVotes}명
                                   </span>
-                                  <span className="text-[10px] text-amber-300/80 whitespace-nowrap shrink-0">
-                                    {remainingStr}
+                                  <span className={`text-[10px] whitespace-nowrap shrink-0 ${isTimeClosed ? 'text-rose-300 font-semibold' : 'text-amber-300/80'}`}>
+                                    {isTimeClosed ? closedTimeStr : remainingStr}
                                   </span>
                                 </div>
 
@@ -954,9 +1026,16 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
 
                               {isTimeClosed && isUnlocked && (
                                 <div className="px-2 py-1.5 rounded bg-slate-900/80 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                  <span className="whitespace-normal break-keep break-words leading-snug">
-                                    🏆 {winnerSummary.summaryText} ({totalVotes}/{maxCap}명 참여)
-                                  </span>
+                                  <div className="space-y-0.5 min-w-0">
+                                    <span className="whitespace-normal break-keep break-words leading-snug block">
+                                      🏆 {winnerSummary.summaryText} ({totalVotes}/{maxCap}명 참여)
+                                    </span>
+                                    {p.expiresAt && (
+                                      <span className="text-[9.5px] text-rose-300/90 font-semibold block">
+                                        🕒 {closedTimeStr}
+                                      </span>
+                                    )}
+                                  </div>
                                   {onOpenResultsDirect && (
                                     <button
                                       type="button"
@@ -1093,8 +1172,11 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
             <span className="whitespace-normal break-keep break-words leading-snug">
               입장 안건: <strong className="text-slate-200">{selectedPoll.title}</strong>
               <span className="ml-1.5 text-emerald-400 font-semibold inline-block">
-                (🟢 현재 접속 {livePresenceCounts[selectedPoll.id] || 0}명 · 🗳️ 누적 {selectedPollDisplayTotal}명
-                {!selectedPoll.isOfficial ? ` / ${selectedPollCapacity}명` : ''})
+                (🟢 현재 접속 {selectedLiveCount}명 ·{' '}
+                {selectedPoll.isOfficial
+                  ? selectedPollChannelLabel
+                  : `🗳️ 누적 ${selectedPollDisplayTotal}명 / ${selectedPollCapacity}명`}
+                )
               </span>
               {selectedPoll.category === 'private' && (
                 <span className={`ml-1 font-bold inline-block ${isSelectedPrivateLocked ? 'text-amber-400' : 'text-emerald-400'}`}>
@@ -1273,6 +1355,21 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                   <span className="text-xs text-slate-400">명</span>
                 </div>
               </div>
+
+              {/* Duration / Deadline Selection with Live Preview */}
+              <PollDurationSelector
+                durationHours={editDurationHours}
+                existingExpiresAt={editingPoll.expiresAt}
+                isModified={editDurationTouched}
+                onChange={(hrs) => {
+                  setEditDurationHours(hrs);
+                  setEditDurationTouched(true);
+                }}
+                onResetToExisting={() => {
+                  setEditDurationHours(editingPoll.durationHours || 24);
+                  setEditDurationTouched(false);
+                }}
+              />
 
               {/* Choices (2 to 10) */}
               <div>

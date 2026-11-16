@@ -1,5 +1,9 @@
 import { Candidate } from '../types';
-import { BETA_DISCLAIMER_TEXT, PollWinnerSummary } from '../data/presetPolls';
+import {
+  BETA_DISCLAIMER_TEXT,
+  PollWinnerSummary,
+  formatClosedDateTimeDot,
+} from '../data/presetPolls';
 
 function wrapTextLines(
   ctx: CanvasRenderingContext2D,
@@ -101,6 +105,8 @@ export interface OfficialImageRenderInput {
   candidates: Candidate[];
   winnerSummary: PollWinnerSummary;
   isClosed: boolean;
+  closedAt?: number | null;
+  isPermanent?: boolean;
   issuedAt?: Date;
 }
 
@@ -364,11 +370,20 @@ export async function renderWinnerCertificateCanvas(
     ctx.fillText(line, W / 2, 956 + idx * 48);
   });
 
-  // Issuance Timestamp
+  // Issuance & Closing Timestamp
   const issuedStr = formatIssuedAtKorean(input.issuedAt || new Date());
   ctx.fillStyle = '#57534e';
-  ctx.font = '600 24px "Pretendard", "Noto Sans KR", sans-serif';
-  ctx.fillText(`발급일시 : ${issuedStr}`, W / 2, 1134);
+  if (input.isClosed && input.closedAt) {
+    ctx.font = '700 22px "Pretendard", "Noto Sans KR", sans-serif';
+    ctx.fillStyle = '#be123c';
+    ctx.fillText(`마감 확정 : ${formatClosedDateTimeDot(input.closedAt)}`, W / 2, 1118);
+    ctx.fillStyle = '#57534e';
+    ctx.font = '600 20px "Pretendard", "Noto Sans KR", sans-serif';
+    ctx.fillText(`발급일시 : ${issuedStr}`, W / 2, 1148);
+  } else {
+    ctx.font = '600 24px "Pretendard", "Noto Sans KR", sans-serif';
+    ctx.fillText(`발급일시 : ${issuedStr}`, W / 2, 1134);
+  }
 
   // Authority + Official Red Square Seal Stamp
   ctx.fillStyle = '#0c4a6e';
@@ -493,13 +508,19 @@ export async function renderFinalResultsCanvas(
     cursorY += 54;
   });
 
-  // Subtitle stats
+  // Subtitle stats (includes exact closing date/time when closed)
   const totalVotes = input.candidates.reduce((s, c) => s + (Number(c.votes) || 0), 0);
   const issuedStr = formatIssuedAtKorean(input.issuedAt || new Date());
-  ctx.fillStyle = '#94a3b8';
+  const timeStampLabel =
+    input.isClosed && input.closedAt
+      ? formatClosedDateTimeDot(input.closedAt)
+      : input.isPermanent
+      ? '상시 운영'
+      : `공고시각 ${issuedStr}`;
+  ctx.fillStyle = input.isClosed && input.closedAt ? '#fda4af' : '#94a3b8';
   ctx.font = '600 22px "Pretendard", "Noto Sans KR", sans-serif';
   ctx.fillText(
-    `총 참여 유권자 ${totalVotes}명  ·  후보 ${input.candidates.length}개  ·  공고시각 ${issuedStr}`,
+    `총 참여 유권자 ${totalVotes}명  ·  후보 ${input.candidates.length}개  ·  ${timeStampLabel}`,
     72,
     cursorY + 6
   );

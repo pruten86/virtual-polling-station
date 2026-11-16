@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { StationZone } from '../types';
 import { EmoteId } from '../scene/avatar';
+import {
+  formatClosedDateTimeKorean,
+  formatScheduledDeadlineKorean,
+} from '../data/presetPolls';
 import { sounds } from '../sound';
 import {
   Volume2,
@@ -38,6 +42,8 @@ interface CollapsibleHUDProps {
   totalVoters?: number;
   maxVoters?: number;
   isOfficial?: boolean;
+  isPermanent?: boolean;
+  expiresAt?: number;
   activeChannelIndex?: number;
   channelVotes?: number;
   cumulativeVotes?: number;
@@ -73,6 +79,8 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   totalVoters,
   maxVoters,
   isOfficial,
+  isPermanent = false,
+  expiresAt,
   activeChannelIndex = 1,
   channelVotes = 0,
   cumulativeVotes = 0,
@@ -306,6 +314,16 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                   </span>
                   <span className="text-[11px] sm:text-xs font-bold text-white whitespace-normal break-keep break-words leading-snug">
                     {pollTitle}
+                    {isPermanent && !isClosed && (
+                      <span className="inline-block ml-1.5 px-1.5 py-0.2 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[9.5px] sm:text-[10px] font-bold whitespace-nowrap align-middle">
+                        ♾️ 상시 운영 (기한 제한 없음)
+                      </span>
+                    )}
+                    {!isPermanent && !isClosed && expiresAt && (
+                      <span className="inline-block ml-1.5 px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-400/35 text-amber-200 text-[9.5px] sm:text-[10px] font-semibold whitespace-nowrap align-middle">
+                        🕒 {formatScheduledDeadlineKorean(expiresAt)}
+                      </span>
+                    )}
                   </span>
                 </div>
               )}
@@ -314,9 +332,16 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
               {isClosed && (
                 <div className="mt-1 sm:mt-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-emerald-950/80 border border-rose-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 text-xs">
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 min-w-0">
-                    <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0 self-start sm:self-auto">
-                      🏁 투표 마감 · 개표 참관 모드
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-200 text-[10px] font-extrabold whitespace-nowrap shrink-0">
+                        🏁 투표 마감 · 개표 참관 모드
+                      </span>
+                      {expiresAt && (
+                        <span className="px-2 py-0.5 rounded-full bg-slate-900/90 border border-rose-500/40 text-rose-300 text-[10px] font-bold whitespace-nowrap shrink-0">
+                          🕒 {formatClosedDateTimeKorean(expiresAt)}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-emerald-300 font-bold text-[11px] sm:text-xs whitespace-normal break-keep break-words leading-snug">
                       {winnerSummaryText || '개표 완료'}
                     </span>

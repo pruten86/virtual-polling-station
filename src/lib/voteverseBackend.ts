@@ -33,6 +33,7 @@ import {
   formatDbOptionSubtitle,
   parseOptionPartyAndSubtitle,
   mergeOfficialPresetCandidates,
+  isPollPermanent,
 } from '../data/presetPolls';
 
 const STORAGE_KEY_VOTED_PREFIX = 'vps_user_voted_';
@@ -372,18 +373,22 @@ export async function ensurePresetPollsSeeded(): Promise<void> {
       // 1. Check which official preset polls already exist
       const { data: existingPolls } = await supabase
         .from('polls')
-        .select('id')
+        .select('id, expires_at')
         .in('id', presetIds);
-      const existingPollIds = new Set((existingPolls || []).map((p: any) => String(p.id)));
+      const existingById = new Map((existingPolls || []).map((p: any) => [String(p.id), p]));
 
-      const missingPolls = PRESET_POLLS.filter((p) => !existingPollIds.has(p.id)).map((p) => ({
+      const missingPolls = PRESET_POLLS.filter((p) => !existingById.has(p.id)).map((p) => ({
         id: p.id,
         title: p.title,
         description: p.description,
         category: p.category || 'public',
         max_voters: p.maxVoters || 100,
         duration_hours: Math.max(1, Math.round(p.durationHours || 720)),
-        expires_at: p.expiresAt ? new Date(p.expiresAt).toISOString() : null,
+        expires_at: isPollPermanent(p)
+          ? null
+          : p.expiresAt
+          ? new Date(p.expiresAt).toISOString()
+          : null,
         created_at: new Date().toISOString(),
       }));
 
@@ -391,6 +396,20 @@ export async function ensurePresetPollsSeeded(): Promise<void> {
         await supabase
           .from('polls')
           .upsert(missingPolls, { onConflict: 'id', ignoreDuplicates: true });
+      }
+
+      // Ensure permanent poll-lunch has expires_at=null and seasonal official polls match fixed deadlines
+      for (const preset of PRESET_POLLS) {
+        const existing = existingById.get(preset.id);
+        if (!existing) continue;
+        if (isPollPermanent(preset) && existing.expires_at !== null) {
+          await supabase.from('polls').update({ expires_at: null }).eq('id', preset.id);
+        } else if (!isPollPermanent(preset) && preset.expiresAt) {
+          const targetIso = new Date(preset.expiresAt).toISOString();
+          if (existing.expires_at !== targetIso) {
+            await supabase.from('polls').update({ expires_at: targetIso }).eq('id', preset.id);
+          }
+        }
       }
 
       // 2. Verify, repair any contaminated rows, and seed missing canonical options for all 3 official polls
@@ -512,9 +531,11 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
 
       // For official preset polls, ALWAYS use PRESET_POLLS as source of truth and merge only valid DB vote_counts
       if (presetMatch) {
+        const permanent = isPollPermanent(presetMatch);
         return {
           ...presetMatch,
-          expiresAt: effectiveExpiresAt || presetMatch.expiresAt,
+          isPermanent: permanent,
+          expiresAt: permanent ? undefined : presetMatch.expiresAt,
           candidates: mergeOfficialPresetCandidates(presetMatch, rawOptionsMap[pollIdStr] || []),
         };
       }
@@ -547,10 +568,11 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     const merged = [...remotePolls];
     PRESET_POLLS.forEach((preset) => {
       if (!remoteIds.has(preset.id)) {
-        const overrideClosedAt = closedOverrides[preset.id];
+        const permanent = isPollPermanent(preset);
         merged.push({
           ...preset,
-          expiresAt: overrideClosedAt || preset.expiresAt,
+          isPermanent: permanent,
+          expiresAt: permanent ? undefined : preset.expiresAt,
           candidates: mergeOfficialPresetCandidates(preset, rawOptionsMap[preset.id] || []),
         });
       }
@@ -587,9 +609,11 @@ function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
       : dbExpiresAt;
 
   if (presetMatch) {
+    const permanent = isPollPermanent(presetMatch);
     return {
       ...presetMatch,
-      expiresAt: effectiveExpiresAt || presetMatch.expiresAt,
+      isPermanent: permanent,
+      expiresAt: permanent ? undefined : presetMatch.expiresAt,
       candidates: mergeOfficialPresetCandidates(presetMatch, optionRows),
     };
   }
@@ -1563,12 +1587,16 @@ export interface MultiplayerRoomHandle {
   leave: () => void;
 }
 
+export function getOfficialRoomChannelName(pollId: string, subChannelIndex: number = 1): string {
+  const safeSub = Math.max(1, Math.floor(subChannelIndex) || 1);
+  return `voteverse_room_${pollId}_ch${safeSub}`;
+}
+
 /**
  * Connect to polling station room using Supabase Presence & Broadcast
- * Channel name: voteverse_room_${pollId}
- * - channel.track() is called ONCE on SUBSCRIBED (never during movement)
- * - All movement & heartbeat sync uses Broadcast 'player_state' exclusively
- * - Ignores spurious Presence 'leave' events; deletes remote avatars only on explicit 'player_leave' broadcast (or timeout in client)
+ * - Custom polls: voteverse_room_${pollId}
+ * - Official polls: 100-user partitioned sub-channels voteverse_room_${pollId}_ch1, _ch2, ...
+ *   (Prevents 3D scene overload while vote tallies remain aggregated across the poll_id)
  */
 export function joinMultiplayerRoom(
   pollId: string,
@@ -1587,6 +1615,11 @@ export function joinMultiplayerRoom(
     onVoteCast: (payload: VoteCastPayload) => void;
     onPeerEmote?: (payload: EmotePayload) => void;
     onConnectionChange?: (isConnected: boolean) => void;
+    onSubChannelChange?: (subChannelIndex: number) => void;
+  },
+  options?: {
+    isOfficial?: boolean;
+    subChannelIndex?: number;
   }
 ): MultiplayerRoomHandle {
   if (!isSupabaseConfigured || !supabase) {
@@ -1604,6 +1637,7 @@ export function joinMultiplayerRoom(
   }
 
   let subscribed = false;
+  let isDisposed = false;
   let activeEmoteBroadcast: {
     emoteId: EmoteId;
     emoji: string;
@@ -1614,13 +1648,13 @@ export function joinMultiplayerRoom(
   let emoteSeqCounter = 0;
 
   callbacks.onConnectionChange?.(false);
-  const roomChannelName = `voteverse_room_${pollId}`;
-  const channel = supabase.channel(roomChannelName, {
-    config: {
-      broadcast: { self: false },
-      presence: { key: localPlayer.userId },
-    },
-  });
+  const isOfficialRoom = Boolean(options?.isOfficial);
+  let currentSubChannel = isOfficialRoom
+    ? Math.max(1, options?.subChannelIndex || Math.floor(getLobbyPollPresenceCount(pollId) / 100) + 1)
+    : 1;
+
+  const getRoomName = (subIdx: number) =>
+    isOfficialRoom ? getOfficialRoomChannelName(pollId, subIdx) : `voteverse_room_${pollId}`;
 
   const normalizePeer = (raw: any, fallbackKey?: string): RemotePlayer | null => {
     if (!raw && !fallbackKey) return null;
@@ -1661,126 +1695,169 @@ export function joinMultiplayerRoom(
     };
   };
 
-  const syncPresencePeers = () => {
-    const state = channel.presenceState();
-    const activeIds = new Set<string>();
+  let activeChannel: any = null;
 
-    Object.entries(state).forEach(([key, items]: [string, any]) => {
-      if (key === localPlayer.userId) return;
-      if (Array.isArray(items) && items.length > 0) {
-        const latest = items[items.length - 1];
-        const peer = normalizePeer(latest, key);
+  const attachChannel = (subIdx: number) => {
+    if (isDisposed || !supabase) return;
+    currentSubChannel = subIdx;
+    callbacks.onSubChannelChange?.(subIdx);
+
+    const roomChannelName = getRoomName(subIdx);
+    const ch = supabase.channel(roomChannelName, {
+      config: {
+        broadcast: { self: false },
+        presence: { key: localPlayer.userId },
+      },
+    });
+    activeChannel = ch;
+
+    const syncPresencePeers = () => {
+      if (activeChannel !== ch) return;
+      const state = ch.presenceState();
+      const activeIds = new Set<string>();
+
+      Object.entries(state).forEach(([key, items]: [string, any]) => {
+        if (key === localPlayer.userId) return;
+        if (Array.isArray(items) && items.length > 0) {
+          const latest = items[items.length - 1];
+          const peer = normalizePeer(latest, key);
+          if (peer) {
+            activeIds.add(peer.userId);
+            callbacks.onPeerState(peer);
+          }
+        }
+      });
+
+      callbacks.onPresenceCount?.(activeIds.size + 1);
+    };
+
+    ch
+      .on('presence', { event: 'sync' }, () => {
+        syncPresencePeers();
+      })
+      .on('presence', { event: 'join' }, ({ key, newPresences }: any) => {
+        if (activeChannel !== ch) return;
+        if (Array.isArray(newPresences)) {
+          newPresences.forEach((item: any) => {
+            const peer = normalizePeer(item, key);
+            if (peer) callbacks.onPeerState(peer);
+          });
+        }
+        syncPresencePeers();
+      })
+      .on('presence', { event: 'leave' }, () => {
+        if (activeChannel !== ch) return;
+        // Do NOT call onPeerLeave on Presence leave (Supabase emits leave on track updates/reconnects).
+        // Only refresh presence count safely; actual avatar removal is driven by 'player_leave' broadcast or 12s timeout.
+        const state = ch.presenceState();
+        const activeIds = new Set<string>();
+        Object.keys(state).forEach((k) => {
+          if (k && k !== localPlayer.userId) activeIds.add(k);
+        });
+        callbacks.onPresenceCount?.(activeIds.size + 1);
+      })
+      .on('broadcast', { event: 'player_state' }, ({ payload }: any) => {
+        if (activeChannel !== ch) return;
+        const peer = normalizePeer(payload);
         if (peer) {
-          activeIds.add(peer.userId);
           callbacks.onPeerState(peer);
         }
-      }
-    });
+      })
+      .on('broadcast', { event: 'player_move' }, ({ payload }: any) => {
+        if (activeChannel !== ch) return;
+        const peer = normalizePeer(payload);
+        if (peer) {
+          callbacks.onPeerState(peer);
+        }
+      })
+      .on('broadcast', { event: 'player_leave' }, ({ payload }: any) => {
+        if (activeChannel !== ch) return;
+        const leftId = String(payload?.userId || '').trim();
+        if (leftId && leftId !== localPlayer.userId) {
+          callbacks.onPeerLeave?.(leftId);
+        }
+      })
+      .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
+        if (activeChannel !== ch) return;
+        if (payload) {
+          callbacks.onVoteCast(payload);
+        }
+      })
+      .on('broadcast', { event: 'player_emote' }, ({ payload }: any) => {
+        if (activeChannel !== ch) return;
+        if (payload && payload.userId && payload.userId !== localPlayer.userId) {
+          const resolvedId = resolveEmoteId(payload.emoteId || payload.emoji, payload.text);
+          callbacks.onPeerEmote?.({
+            userId: String(payload.userId),
+            nickname: typeof payload.nickname === 'string' ? payload.nickname : '선거인',
+            emoteId: resolvedId,
+            emoji: typeof payload.emoji === 'string' ? payload.emoji : '😊',
+            text: typeof payload.text === 'string' ? payload.text : '',
+            seq: Number.isFinite(Number(payload.seq)) ? Number(payload.seq) : Date.now(),
+          });
+        }
+      })
+      .subscribe(async (status) => {
+        if (isDisposed || activeChannel !== ch) return;
+        if (status === 'SUBSCRIBED') {
+          // Official poll 100-user room overflow protection: hop to next _chN if 100 peers already occupy this sub-channel
+          if (isOfficialRoom && subIdx < 20) {
+            const existingState = ch.presenceState();
+            const otherPeers = Object.keys(existingState).filter((k) => k && k !== localPlayer.userId);
+            if (otherPeers.length >= 100) {
+              subscribed = false;
+              try {
+                ch.untrack();
+              } catch {}
+              supabase?.removeChannel(ch);
+              attachChannel(subIdx + 1);
+              return;
+            }
+          }
 
-    callbacks.onPresenceCount?.(activeIds.size + 1);
+          subscribed = true;
+          callbacks.onConnectionChange?.(true);
+          const safeX = Number.isFinite(Number(localPlayer.x)) ? Number(localPlayer.x) : -6.5;
+          const safeZ = Number.isFinite(Number(localPlayer.z)) ? Number(localPlayer.z) : 0.5;
+          const safeRotY = Number.isFinite(Number(localPlayer.rotY)) ? Number(localPlayer.rotY) : Math.PI;
+
+          const initialPayload = {
+            userId: localPlayer.userId,
+            nickname: localPlayer.nickname,
+            avatarType: localPlayer.avatarType,
+            x: safeX,
+            z: safeZ,
+            rotY: safeRotY,
+            isMoving: false,
+          };
+
+          // Call channel.track() ONCE on SUBSCRIBED (never during movement)
+          try {
+            await ch.track(initialPayload);
+          } catch (err) {
+            console.warn('[Supabase presence track error]', err);
+          }
+
+          try {
+            await ch.send({
+              type: 'broadcast',
+              event: 'player_state',
+              payload: initialPayload,
+            });
+          } catch (err) {
+            console.warn('[Supabase initial broadcast error]', err);
+          }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          subscribed = false;
+          callbacks.onConnectionChange?.(false);
+        }
+      });
   };
 
-  channel
-    .on('presence', { event: 'sync' }, () => {
-      syncPresencePeers();
-    })
-    .on('presence', { event: 'join' }, ({ key, newPresences }: any) => {
-      if (Array.isArray(newPresences)) {
-        newPresences.forEach((item: any) => {
-          const peer = normalizePeer(item, key);
-          if (peer) callbacks.onPeerState(peer);
-        });
-      }
-      syncPresencePeers();
-    })
-    .on('presence', { event: 'leave' }, () => {
-      // Do NOT call onPeerLeave on Presence leave (Supabase emits leave on track updates/reconnects).
-      // Only refresh presence count safely; actual avatar removal is driven by 'player_leave' broadcast or 12s timeout.
-      const state = channel.presenceState();
-      const activeIds = new Set<string>();
-      Object.keys(state).forEach((k) => {
-        if (k && k !== localPlayer.userId) activeIds.add(k);
-      });
-      callbacks.onPresenceCount?.(activeIds.size + 1);
-    })
-    .on('broadcast', { event: 'player_state' }, ({ payload }: any) => {
-      const peer = normalizePeer(payload);
-      if (peer) {
-        callbacks.onPeerState(peer);
-      }
-    })
-    .on('broadcast', { event: 'player_move' }, ({ payload }: any) => {
-      const peer = normalizePeer(payload);
-      if (peer) {
-        callbacks.onPeerState(peer);
-      }
-    })
-    .on('broadcast', { event: 'player_leave' }, ({ payload }: any) => {
-      const leftId = String(payload?.userId || '').trim();
-      if (leftId && leftId !== localPlayer.userId) {
-        callbacks.onPeerLeave?.(leftId);
-      }
-    })
-    .on('broadcast', { event: 'vote_cast' }, ({ payload }: any) => {
-      if (payload) {
-        callbacks.onVoteCast(payload);
-      }
-    })
-    .on('broadcast', { event: 'player_emote' }, ({ payload }: any) => {
-      if (payload && payload.userId && payload.userId !== localPlayer.userId) {
-        const resolvedId = resolveEmoteId(payload.emoteId || payload.emoji, payload.text);
-        callbacks.onPeerEmote?.({
-          userId: String(payload.userId),
-          nickname: typeof payload.nickname === 'string' ? payload.nickname : '선거인',
-          emoteId: resolvedId,
-          emoji: typeof payload.emoji === 'string' ? payload.emoji : '😊',
-          text: typeof payload.text === 'string' ? payload.text : '',
-          seq: Number.isFinite(Number(payload.seq)) ? Number(payload.seq) : Date.now(),
-        });
-      }
-    })
-    .subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        subscribed = true;
-        callbacks.onConnectionChange?.(true);
-        const safeX = Number.isFinite(Number(localPlayer.x)) ? Number(localPlayer.x) : -6.5;
-        const safeZ = Number.isFinite(Number(localPlayer.z)) ? Number(localPlayer.z) : 0.5;
-        const safeRotY = Number.isFinite(Number(localPlayer.rotY)) ? Number(localPlayer.rotY) : Math.PI;
-
-        const initialPayload = {
-          userId: localPlayer.userId,
-          nickname: localPlayer.nickname,
-          avatarType: localPlayer.avatarType,
-          x: safeX,
-          z: safeZ,
-          rotY: safeRotY,
-          isMoving: false,
-        };
-
-        // Call channel.track() ONCE on SUBSCRIBED (never during movement)
-        try {
-          await channel.track(initialPayload);
-        } catch (err) {
-          console.warn('[Supabase presence track error]', err);
-        }
-
-        try {
-          await channel.send({
-            type: 'broadcast',
-            event: 'player_state',
-            payload: initialPayload,
-          });
-        } catch (err) {
-          console.warn('[Supabase initial broadcast error]', err);
-        }
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        subscribed = false;
-        callbacks.onConnectionChange?.(false);
-      }
-    });
+  attachChannel(currentSubChannel);
 
   const sendStateBroadcast = (state: PlayerStateInput) => {
-    if (!subscribed) return;
+    if (!subscribed || !activeChannel) return;
     const x = Number(state.x);
     const z = Number(state.z);
     const rotY = Number(state.rotY);
@@ -1796,7 +1873,7 @@ export function joinMultiplayerRoom(
     }
 
     try {
-      channel.send({
+      activeChannel.send({
         type: 'broadcast',
         event: 'player_state',
         payload: {
@@ -1823,7 +1900,9 @@ export function joinMultiplayerRoom(
   };
 
   return {
-    channel,
+    get channel() {
+      return activeChannel;
+    },
     isSubscribed: () => subscribed,
     sendPlayerState: (state: PlayerStateInput) => {
       sendStateBroadcast(state);
@@ -1868,9 +1947,9 @@ export function joinMultiplayerRoom(
       });
     },
     broadcastVote: (nickname: string, candidateId: string) => {
-      if (!subscribed) return;
+      if (!subscribed || !activeChannel) return;
       try {
-        channel.send({
+        activeChannel.send({
           type: 'broadcast',
           event: 'vote_cast',
           payload: {
@@ -1884,7 +1963,7 @@ export function joinMultiplayerRoom(
       }
     },
     sendEmote: (emoji: string, text: string, explicitId?: EmoteId) => {
-      if (!subscribed) return;
+      if (!subscribed || !activeChannel) return;
       const emoteId = resolveEmoteId(emoji, text, explicitId);
       const seq = Date.now() * 1000 + (++emoteSeqCounter % 1000);
       activeEmoteBroadcast = {
@@ -1895,7 +1974,7 @@ export function joinMultiplayerRoom(
         expiresAt: Date.now() + 2600,
       };
       try {
-        channel.send({
+        activeChannel.send({
           type: 'broadcast',
           event: 'player_emote',
           payload: {
@@ -1912,9 +1991,10 @@ export function joinMultiplayerRoom(
       }
     },
     leave: () => {
-      if (subscribed) {
+      isDisposed = true;
+      if (subscribed && activeChannel) {
         try {
-          channel.send({
+          activeChannel.send({
             type: 'broadcast',
             event: 'player_leave',
             payload: { userId: localPlayer.userId },
@@ -1923,10 +2003,13 @@ export function joinMultiplayerRoom(
       }
       subscribed = false;
       callbacks.onConnectionChange?.(false);
-      try {
-        channel.untrack();
-      } catch {}
-      supabase?.removeChannel(channel);
+      if (activeChannel) {
+        try {
+          activeChannel.untrack();
+        } catch {}
+        supabase?.removeChannel(activeChannel);
+        activeChannel = null;
+      }
     },
   };
 }
@@ -2143,7 +2226,7 @@ export async function closePollNow(
     };
   }
 
-  const closedAt = Date.now() - 1000;
+  const closedAt = Date.now();
   const closedIso = new Date(closedAt).toISOString();
 
   // Persist locally immediately so UI reflects closed status even offline / RLS-restricted
@@ -2279,6 +2362,11 @@ function computeLobbyCounts(): Record<string, number> {
     result[pid] = set.size;
   });
   return result;
+}
+
+export function getLobbyPollPresenceCount(pollId: string): number {
+  const counts = computeLobbyCounts();
+  return counts[pollId] || 0;
 }
 
 function notifyLobbyListeners(): void {

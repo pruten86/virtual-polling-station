@@ -179,8 +179,9 @@ export function generateRandomNickname(): string {
   return `${adj} ${noun} #${num}`;
 }
 
-// 30 days default expiration for official preset polls
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+// Fixed seasonal deadlines for limited-time official polls
+const OFFICIAL_MONDAY11_DEADLINE = new Date(2026, 11, 18, 23, 59, 0).getTime();
+const OFFICIAL_DINNER_DEADLINE = new Date(2026, 11, 31, 23, 59, 0).getTime();
 
 export const PRESET_POLLS: PollStation[] = [
   {
@@ -191,7 +192,8 @@ export const PRESET_POLLS: PollStation[] = [
     maxVoters: 100,
     createdAt: '2026-11-07',
     isOfficial: true,
-    expiresAt: Date.now() + THIRTY_DAYS_MS,
+    isPermanent: true,
+    expiresAt: undefined,
     candidates: [
       {
         id: 'poll-lunch-1',
@@ -236,7 +238,8 @@ export const PRESET_POLLS: PollStation[] = [
     maxVoters: 100,
     createdAt: '2026-11-07',
     isOfficial: true,
-    expiresAt: Date.now() + THIRTY_DAYS_MS,
+    isPermanent: false,
+    expiresAt: OFFICIAL_MONDAY11_DEADLINE,
     candidates: [
       {
         id: 'poll-monday11-1',
@@ -281,7 +284,8 @@ export const PRESET_POLLS: PollStation[] = [
     maxVoters: 100,
     createdAt: '2026-11-07',
     isOfficial: true,
-    expiresAt: Date.now() + THIRTY_DAYS_MS,
+    isPermanent: false,
+    expiresAt: OFFICIAL_DINNER_DEADLINE,
     candidates: [
       {
         id: 'poll-dinner-1',
@@ -479,11 +483,60 @@ export function getPollWinnerSummary(candidates: Candidate[]): PollWinnerSummary
   };
 }
 
+export function isPollPermanent(
+  poll?: Pick<PollStation, 'id' | 'isPermanent'> | null
+): boolean {
+  if (!poll) return false;
+  return Boolean(poll.isPermanent) || poll.id === 'poll-lunch';
+}
+
+export function computeOfficialStationNumber(
+  totalVotes: number,
+  onlineCount: number = 0
+): number {
+  const safeVotes = Math.max(0, Math.floor(Number(totalVotes) || 0));
+  const safeOnline = Math.max(0, Math.floor(Number(onlineCount) || 0));
+  return Math.max(Math.floor(safeVotes / 100) + 1, Math.floor(safeOnline / 100) + 1);
+}
+
+export function formatClosedDateTimeKorean(timestamp?: number | null): string {
+  if (!timestamp || !Number.isFinite(timestamp)) return '마감 완료';
+  const d = new Date(timestamp);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}년 ${m}월 ${day}일 ${hh}:${mm} 마감`;
+}
+
+export function formatClosedDateTimeDot(timestamp?: number | null): string {
+  if (!timestamp || !Number.isFinite(timestamp)) return '마감 확정';
+  const d = new Date(timestamp);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}.${m}.${day} ${hh}:${mm} 마감 확정`;
+}
+
+export function formatScheduledDeadlineKorean(timestamp?: number | null): string {
+  if (!timestamp || !Number.isFinite(timestamp)) return '기한 제한 없음';
+  const d = new Date(timestamp);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}년 ${m}월 ${day}일 ${hh}:${mm} 마감`;
+}
+
 // Format human-readable remaining time
-export function formatRemainingTime(expiresAt?: number): string {
-  if (!expiresAt) return '상시 운영';
+export function formatRemainingTime(expiresAt?: number, isPermanent?: boolean): string {
+  if (isPermanent || !expiresAt) return '상시 운영 (기한 제한 없음)';
   const diff = expiresAt - Date.now();
-  if (diff <= 0) return '투표 마감';
+  if (diff <= 0) return formatClosedDateTimeKorean(expiresAt);
 
   const totalSecs = Math.floor(diff / 1000);
   const days = Math.floor(totalSecs / 86400);
@@ -503,8 +556,9 @@ export function formatRemainingTime(expiresAt?: number): string {
   return `${secs}초 남음`;
 }
 
-// Check if a poll is expired
+// Check if a poll is expired (permanent polls never expire)
 export function isPollExpired(poll: PollStation): boolean {
+  if (isPollPermanent(poll)) return false;
   if (!poll.expiresAt) return false;
   return Date.now() >= poll.expiresAt;
 }
@@ -512,7 +566,11 @@ export function isPollExpired(poll: PollStation): boolean {
 export function getAllPolls(): PollStation[] {
   const closedOverrides = getClosedPollOverrides();
   const presetsWithOverrides = PRESET_POLLS.map((p) =>
-    closedOverrides[p.id] ? { ...p, expiresAt: closedOverrides[p.id] } : p
+    isPollPermanent(p)
+      ? { ...p, isPermanent: true, expiresAt: undefined }
+      : closedOverrides[p.id]
+      ? { ...p, expiresAt: closedOverrides[p.id] }
+      : p
   );
 
   try {

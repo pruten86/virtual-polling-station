@@ -18,6 +18,8 @@ import {
   getPollTallies,
   generateRandomNickname,
   isPollExpired,
+  isPollPermanent,
+  computeOfficialStationNumber,
   getPollWinnerSummary,
 } from './data/presetPolls';
 import {
@@ -34,6 +36,8 @@ import {
   isPollOwnerOrAdmin,
   isProtectedOfficialPoll,
   joinLobbyIndexTracker,
+  subscribeLobbyPresenceCounts,
+  getLobbyPollPresenceCount,
   checkHasVotedVoteverse,
   fetchPollTalliesFromDB,
   joinMultiplayerRoom,
@@ -77,37 +81,41 @@ function getSpawnOffsetFromId(peerId: string): { dx: number; dz: number } {
   return { dx, dz };
 }
 
-// Build official 100-voter channel summary & breakdown strictly from live DB candidate totals
-function buildOfficialChannelState(cands: Candidate[]): {
+// Build official 100-voter channel summary & breakdown strictly from live DB candidate totals + online concurrency
+function buildOfficialChannelState(
+  cands: Candidate[],
+  onlineCount: number = 0
+): {
   activeChannelIndex: number;
   channelVotes: number;
   totalCumulativeVotes: number;
   allChannels: PollChannelData[];
 } {
   const total = cands.reduce((s, c) => s + (Number(c.votes) || 0), 0);
-  const channelCount = Math.floor(total / 100) + 1;
-  const activeChannelIndex = channelCount;
+  const voteChannelCount = Math.floor(total / 100) + 1;
+  const activeChannelIndex = computeOfficialStationNumber(total, onlineCount);
   const channelVotes = total % 100;
 
-  const allChannels: PollChannelData[] = [];
-  if (total === 0) {
+  const createEmptyVotesMap = (): Record<string, number> => {
     const emptyVotes: Record<string, number> = {};
     cands.forEach((c) => {
       emptyVotes[c.id] = 0;
     });
-    allChannels.push({ channelIndex: 1, votes: emptyVotes, totalVotes: 0 });
+    return emptyVotes;
+  };
+
+  const allChannels: PollChannelData[] = [];
+  if (total === 0) {
+    allChannels.push({ channelIndex: 1, votes: createEmptyVotesMap(), totalVotes: 0 });
   } else {
     const remainingByCand = cands.map((c) => ({ id: c.id, rem: Number(c.votes) || 0 }));
-    for (let chIdx = 1; chIdx <= channelCount; chIdx++) {
-      const votesMap: Record<string, number> = {};
-      cands.forEach((c) => {
-        votesMap[c.id] = 0;
-      });
-      const chCap = chIdx < channelCount ? 100 : channelVotes;
+    for (let chIdx = 1; chIdx <= voteChannelCount; chIdx++) {
+      const votesMap = createEmptyVotesMap();
+      const chCap = chIdx < voteChannelCount ? 100 : channelVotes;
       let chTotal = 0;
       const totalRem = remainingByCand.reduce((s, r) => s + r.rem, 0);
       if (chCap > 0 && totalRem > 0) {
-        if (chIdx === channelCount) {
+        if (chIdx === voteChannelCount) {
           remainingByCand.forEach((r) => {
             votesMap[r.id] = r.rem;
             chTotal += r.rem;
@@ -142,6 +150,14 @@ function buildOfficialChannelState(cands: Candidate[]): {
       }
       allChannels.push({ channelIndex: chIdx, votes: votesMap, totalVotes: chTotal });
     }
+  }
+
+  for (let extraIdx = allChannels.length + 1; extraIdx <= activeChannelIndex; extraIdx++) {
+    allChannels.push({
+      channelIndex: extraIdx,
+      votes: createEmptyVotesMap(),
+      totalVotes: 0,
+    });
   }
 
   return {
@@ -302,6 +318,11 @@ export default function App() {
   >(new Map());
   const roomHandleRef = useRef<MultiplayerRoomHandle | null>(null);
   const presenceCountRef = useRef<number>(1);
+  const lobbyPollCountRef = useRef<number>(0);
+  const onlineCountRef = useRef<number>(1);
+  useEffect(() => {
+    onlineCountRef.current = onlineCount;
+  }, [onlineCount]);
   const nicknameRef = useRef<string>(nickname);
   useEffect(() => {
     nicknameRef.current = nickname;
@@ -368,7 +389,7 @@ export default function App() {
           setCurrentPoll(matched);
           setCandidates(matched.candidates);
           if (matched.isOfficial) {
-            setOfficialChannelState(buildOfficialChannelState(matched.candidates));
+            setOfficialChannelState(buildOfficialChannelState(matched.candidates, onlineCountRef.current));
           }
         }
       });
@@ -406,7 +427,7 @@ export default function App() {
         setCandidates((prev) => {
           const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
           if (currentPollRef.current.isOfficial) {
-            setOfficialChannelState(buildOfficialChannelState(next));
+            setOfficialChannelState(buildOfficialChannelState(next, onlineCountRef.current));
           }
           return next;
         });
@@ -495,7 +516,7 @@ export default function App() {
       }
 
       if (poll.isOfficial) {
-        setOfficialChannelState(buildOfficialChannelState(dbCandidates));
+        setOfficialChannelState(buildOfficialChannelState(dbCandidates, onlineCountRef.current));
       }
     }
   }, []);
@@ -525,7 +546,7 @@ export default function App() {
         setCandidates((prev) => {
           const next = prev.map((c) => (c.id === optionId ? { ...c, votes } : c));
           if (currentPollRef.current.isOfficial) {
-            setOfficialChannelState(buildOfficialChannelState(next));
+            setOfficialChannelState(buildOfficialChannelState(next, onlineCountRef.current));
           }
           return next;
         });
@@ -596,7 +617,8 @@ export default function App() {
     [currentPoll.id, nickname]
   );
 
-  const isPollClosedForBoard = Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
+  const isPollClosedForBoard =
+    !isPollPermanent(currentPoll) && Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
 
   // Sync billboard & banner with latest candidate tallies, poll title, and closed state
   useEffect(() => {
@@ -639,7 +661,11 @@ export default function App() {
     const currentMap = remoteAvatarsRef.current;
 
     const refreshOnlineCount = () => {
-      const nextCount = Math.max(1 + currentMap.size, presenceCountRef.current);
+      const nextCount = Math.max(
+        1 + currentMap.size,
+        presenceCountRef.current,
+        lobbyPollCountRef.current
+      );
       setOnlineCount((prev) => (prev === nextCount ? prev : nextCount));
     };
 
@@ -771,7 +797,8 @@ export default function App() {
             showToastRef.current(`🗳️ [${voterName}]님이 소중한 한 표를 행사했습니다!`);
           }
         },
-      }
+      },
+      { isOfficial: Boolean(currentPollRef.current.isOfficial) }
     );
 
     roomHandleRef.current = room;
@@ -839,19 +866,43 @@ export default function App() {
   }, [currentPoll?.id, hasEntered, isLobbyOpen, multiplayerPeerId]);
 
   // Track active station membership in global Lobby Presence index while inside a polling station
+  // Also sync global poll concurrency across partitioned official sub-channels (_ch1, _ch2...)
   useEffect(() => {
     if (!hasEntered || isLobbyOpen || !currentPoll?.id) return;
     const stopTracking = joinLobbyIndexTracker(multiplayerPeerId, currentPoll.id);
+    const unsubscribeCounts = subscribeLobbyPresenceCounts((counts) => {
+      const globalCount = counts[currentPoll.id] || 0;
+      lobbyPollCountRef.current = globalCount;
+      const merged = Math.max(1 + remoteAvatarsRef.current.size, presenceCountRef.current, globalCount);
+      setOnlineCount((prev) => (prev === merged ? prev : merged));
+    });
     return () => {
+      lobbyPollCountRef.current = 0;
+      unsubscribeCounts();
       stopTracking();
     };
   }, [hasEntered, isLobbyOpen, currentPoll?.id, multiplayerPeerId]);
+
+  // Keep official 100-user auto-expanding channel state synced with both totalVotes and onlineCount
+  useEffect(() => {
+    if (currentPoll.isOfficial) {
+      setOfficialChannelState(buildOfficialChannelState(candidates, onlineCount));
+    } else {
+      setOfficialChannelState({
+        activeChannelIndex: 1,
+        channelVotes: 0,
+        totalCumulativeVotes: 0,
+        allChannels: [],
+      });
+    }
+  }, [currentPoll.id, currentPoll.isOfficial, candidates, onlineCount]);
 
   const totalVotes = candidates.reduce((s, c) => s + c.votes, 0);
   const maxCapacity = currentPoll.maxVoters || 100;
   // Official polls never reach capacity lock because they auto-expand
   const isCapacityReached = !currentPoll.isOfficial && totalVotes >= maxCapacity;
-  const isCurrentPollClosed = Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
+  const isCurrentPollClosed =
+    !isPollPermanent(currentPoll) && Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
   const canCloseCurrentPoll = isPollOwnerOrAdmin(currentPoll, authUserId);
   const currentWinnerSummary = getPollWinnerSummary(candidates);
 
@@ -954,12 +1005,12 @@ export default function App() {
         prev.map((p) => (p.id === currentPoll.id ? { ...p, candidates: freshCandidates } : p))
       );
       if (currentPoll.isOfficial) {
-        setOfficialChannelState(buildOfficialChannelState(freshCandidates));
+        setOfficialChannelState(buildOfficialChannelState(freshCandidates, onlineCountRef.current));
       }
     }
 
     const latestTotal = freshCandidates.reduce((s, c) => s + c.votes, 0);
-    const latestChannelIdx = Math.floor(latestTotal / 100) + 1;
+    const latestChannelIdx = computeOfficialStationNumber(latestTotal, onlineCountRef.current);
 
     // DB write succeeded: play drop sound & animation, then show certificate & refresh DB tallies
     sounds.playDropSound();
@@ -1557,7 +1608,10 @@ export default function App() {
     const normalizedPoll: PollStation = presetMatch
       ? {
           ...presetMatch,
-          expiresAt: selectedPoll.expiresAt || presetMatch.expiresAt,
+          isPermanent: isPollPermanent(presetMatch),
+          expiresAt: isPollPermanent(presetMatch)
+            ? undefined
+            : presetMatch.expiresAt ?? selectedPoll.expiresAt,
           candidates: presetMatch.candidates.map((pc) => {
             const match = (selectedPoll.candidates || []).find(
               (c) =>
@@ -1576,7 +1630,7 @@ export default function App() {
     // Immediately replace candidates state with normalizedPoll.candidates (never retain previous poll's candidates)
     setCandidates(normalizedPoll.candidates);
     if (normalizedPoll.isOfficial) {
-      setOfficialChannelState(buildOfficialChannelState(normalizedPoll.candidates));
+      setOfficialChannelState(buildOfficialChannelState(normalizedPoll.candidates, onlineCountRef.current));
     } else {
       setOfficialChannelState({
         activeChannelIndex: 1,
@@ -1620,10 +1674,10 @@ export default function App() {
     setHasEntered(true);
     setIsLobbyOpen(false);
 
-    if (isPollExpired(selectedPoll)) {
-      showToast(`🏁 [${selectedPoll.title}] 투표가 마감되어 개표 참관 모드로 입장했습니다!`);
+    if (!isPollPermanent(normalizedPoll) && isPollExpired(normalizedPoll)) {
+      showToast(`🏁 [${normalizedPoll.title}] 투표가 마감되어 개표 참관 모드로 입장했습니다!`);
     } else {
-      showToast(`[${selectedPoll.title}] 투표소에 입장했습니다! 1번 교부대로 이동하세요.`);
+      showToast(`[${normalizedPoll.title}] 투표소에 입장했습니다! 1번 교부대로 이동하세요.`);
     }
   };
 
@@ -1727,12 +1781,15 @@ export default function App() {
       {lobbyResultsPoll && (() => {
         const syncedLobbyPoll =
           allPolls.find((p) => p.id === lobbyResultsPoll.poll.id) || lobbyResultsPoll.poll;
-        const isLobbyPollClosed = Boolean(
-          syncedLobbyPoll.expiresAt && syncedLobbyPoll.expiresAt <= nowTs
-        );
+        const isLobbyPollClosed =
+          !isPollPermanent(syncedLobbyPoll) &&
+          Boolean(syncedLobbyPoll.expiresAt && syncedLobbyPoll.expiresAt <= nowTs);
         const canCloseLobbyPoll = isPollOwnerOrAdmin(syncedLobbyPoll, authUserId);
         const lobbyChannelState = syncedLobbyPoll.isOfficial
-          ? buildOfficialChannelState(syncedLobbyPoll.candidates)
+          ? buildOfficialChannelState(
+              syncedLobbyPoll.candidates,
+              getLobbyPollPresenceCount(syncedLobbyPoll.id)
+            )
           : null;
 
         return (
@@ -1744,6 +1801,8 @@ export default function App() {
             maxVoters={syncedLobbyPoll.maxVoters || 100}
             userVoteId={null}
             isClosed={isLobbyPollClosed}
+            expiresAt={syncedLobbyPoll.expiresAt}
+            isPermanent={isPollPermanent(syncedLobbyPoll)}
             canClosePoll={canCloseLobbyPoll}
             isLobbyDirectView
             initialOpenOfficialDocs={Boolean(lobbyResultsPoll.openOfficialDocs)}
@@ -1792,6 +1851,8 @@ export default function App() {
           totalVoters={totalVotes}
           maxVoters={maxCapacity}
           isOfficial={currentPoll.isOfficial}
+          isPermanent={isPollPermanent(currentPoll)}
+          expiresAt={currentPoll.expiresAt}
           activeChannelIndex={officialChannelState.activeChannelIndex}
           channelVotes={officialChannelState.channelVotes}
           cumulativeVotes={officialChannelState.totalCumulativeVotes}
@@ -1844,6 +1905,8 @@ export default function App() {
           maxVoters={maxCapacity}
           userVoteId={userVoteId}
           isClosed={isCurrentPollClosed}
+          expiresAt={currentPoll.expiresAt}
+          isPermanent={isPollPermanent(currentPoll)}
           canClosePoll={canCloseCurrentPoll}
           onClosePollNow={canCloseCurrentPoll ? () => handleClosePollNow(currentPoll) : undefined}
           isOfficial={currentPoll.isOfficial}
@@ -1852,7 +1915,7 @@ export default function App() {
           onRealtimeCandidateUpdate={(updated) => {
             setCandidates(updated);
             if (currentPoll.isOfficial) {
-              setOfficialChannelState(buildOfficialChannelState(updated));
+              setOfficialChannelState(buildOfficialChannelState(updated, onlineCountRef.current));
             }
           }}
           guestbookMessages={guestbookMessages}

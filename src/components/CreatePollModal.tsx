@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { PollStation, Candidate } from '../types';
 import { sounds } from '../sound';
 import { checkPoliticalContent } from '../data/presetPolls';
@@ -23,12 +23,281 @@ import {
 } from 'lucide-react';
 
 export const DURATION_OPTIONS = [
-  { hours: 1 / 60, label: '1분 후 (테스트)', display: '1분 후 마감 (테스트용)' },
-  { hours: 3 / 60, label: '3분 후', display: '3분 후 마감' },
-  { hours: 1, label: '1시간 후', display: '1시간 후 마감' },
-  { hours: 24, label: '1일 후', display: '1일 후 (24시간)' },
-  { hours: 168, label: '7일 후', display: '7일 후 (168시간)' },
-];
+  { group: 'short', hours: 1 / 60, label: '1분', display: '1분 후 마감 (테스트용)' },
+  { group: 'short', hours: 3 / 60, label: '3분', display: '3분 후 마감 (테스트용)' },
+  { group: 'short', hours: 0.5, label: '30분', display: '30분 후 마감' },
+  { group: 'hourly', hours: 1, label: '1시간', display: '1시간 후 마감' },
+  { group: 'hourly', hours: 2, label: '2시간', display: '2시간 후 마감' },
+  { group: 'hourly', hours: 3, label: '3시간', display: '3시간 후 마감' },
+  { group: 'hourly', hours: 6, label: '6시간', display: '6시간 후 마감' },
+  { group: 'hourly', hours: 12, label: '12시간', display: '12시간 후 마감' },
+  { group: 'hourly', hours: 18, label: '18시간', display: '18시간 후 마감' },
+  { group: 'hourly', hours: 24, label: '24시간(1일)', display: '24시간(1일) 후 마감' },
+  { group: 'daily', hours: 72, label: '3일', display: '3일(72시간) 후 마감' },
+  { group: 'daily', hours: 168, label: '7일', display: '7일(168시간) 후 마감' },
+] as const;
+
+function formatPreviewDateTimeKorean(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}년 ${m}월 ${day}일 ${hh}:${mm}`;
+}
+
+function formatDurationRelativeNote(hours: number): string {
+  if (hours < 1) {
+    const mins = Math.max(1, Math.round(hours * 60));
+    return `약 ${mins}분 후 자동 마감`;
+  }
+  if (hours <= 24) {
+    return `약 ${Math.round(hours)}시간 후 자동 마감`;
+  }
+  const days = Math.round(hours / 24);
+  return `약 ${days}일(${Math.round(hours)}시간) 후 자동 마감`;
+}
+
+export interface PollDurationSelectorProps {
+  durationHours: number;
+  onChange: (hours: number) => void;
+  existingExpiresAt?: number;
+  isModified?: boolean;
+  onResetToExisting?: () => void;
+}
+
+export const PollDurationSelector: React.FC<PollDurationSelectorProps> = ({
+  durationHours,
+  onChange,
+  existingExpiresAt,
+  isModified = true,
+  onResetToExisting,
+}) => {
+  const [nowTs, setNowTs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTs(Date.now());
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const shortOptions = DURATION_OPTIONS.filter((o) => o.group === 'short');
+  const hourlyOptions = DURATION_OPTIONS.filter((o) => o.group === 'hourly');
+  const dailyOptions = DURATION_OPTIONS.filter((o) => o.group === 'daily');
+
+  const isHourlyInt =
+    durationHours >= 1 &&
+    durationHours <= 24 &&
+    Math.abs(durationHours - Math.round(durationHours)) < 0.001;
+  const sliderVal = isHourlyInt
+    ? Math.round(durationHours)
+    : durationHours < 1
+    ? 1
+    : 24;
+
+  const matchedPreset = DURATION_OPTIONS.find(
+    (d) => Math.abs(d.hours - durationHours) < 0.001
+  );
+  const badgeText =
+    existingExpiresAt && !isModified
+      ? '기존 마감 시각 유지 중'
+      : matchedPreset?.display || `${Math.round(durationHours)}시간 후 마감`;
+
+  const previewDeadlineTs =
+    existingExpiresAt && !isModified
+      ? existingExpiresAt
+      : nowTs + durationHours * 3600 * 1000;
+
+  return (
+    <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+          <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span>투표 마감 시간 설정</span>
+        </label>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-bold text-amber-400">{badgeText}</span>
+          {existingExpiresAt && isModified && onResetToExisting && (
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                onResetToExisting();
+              }}
+              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] text-slate-300 cursor-pointer transition"
+            >
+              기존 유지
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Quick preset groups */}
+      <div className="space-y-2">
+        {/* Group 1: 초단기/테스트 */}
+        <div className="space-y-1">
+          <span className="block text-[10px] font-semibold text-slate-400">
+            초단기 · 테스트
+          </span>
+          <div className="grid grid-cols-3 gap-1.5">
+            {shortOptions.map((opt) => {
+              const active =
+                isModified && Math.abs(durationHours - opt.hours) < 0.001;
+              return (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onChange(opt.hours);
+                  }}
+                  className={`py-1.5 px-2 rounded-md text-center text-[11px] font-bold transition cursor-pointer border ${
+                    active
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Group 2: 당일 시간 단위 (1~24시간) */}
+        <div className="space-y-1">
+          <span className="block text-[10px] font-semibold text-slate-400">
+            당일 시간 단위 (1~24시간)
+          </span>
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+            {hourlyOptions.map((opt) => {
+              const active =
+                isModified && Math.abs(durationHours - opt.hours) < 0.001;
+              return (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onChange(opt.hours);
+                  }}
+                  className={`py-1.5 px-1 rounded-md text-center text-[11px] font-bold transition cursor-pointer border whitespace-nowrap ${
+                    active
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Group 3: 다일 단위 */}
+        <div className="space-y-1">
+          <span className="block text-[10px] font-semibold text-slate-400">
+            다일 단위
+          </span>
+          <div className="grid grid-cols-2 gap-1.5">
+            {dailyOptions.map((opt) => {
+              const active =
+                isModified && Math.abs(durationHours - opt.hours) < 0.001;
+              return (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onChange(opt.hours);
+                  }}
+                  className={`py-1.5 px-2 rounded-md text-center text-[11px] font-bold transition cursor-pointer border ${
+                    active
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Custom 1~24 hour slider + 1-hour dropdown */}
+      <div className="pt-2 border-t border-slate-700/60 space-y-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] font-bold text-sky-300">
+            직접 시간 조절 (1~24시간)
+          </span>
+          <select
+            aria-label="직접 시간 선택 (1~24시간)"
+            value={isModified && isHourlyInt ? String(Math.round(durationHours)) : ''}
+            onChange={(e) => {
+              const hrs = Number(e.target.value);
+              if (Number.isFinite(hrs) && hrs >= 1 && hrs <= 24) {
+                sounds.playClick();
+                onChange(hrs);
+              }
+            }}
+            className="px-2 py-1 bg-slate-950 border border-slate-600 rounded-md text-[11px] font-bold text-amber-300 focus:outline-none focus:border-amber-400 cursor-pointer"
+          >
+            <option value="" disabled>
+              시간 직접 선택 (1~24시간)
+            </option>
+            {Array.from({ length: 24 }, (_, idx) => idx + 1).map((h) => (
+              <option key={h} value={String(h)}>
+                {h}시간 후 마감
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <span className="text-[10px] font-mono text-slate-400 shrink-0">1시간</span>
+          <input
+            type="range"
+            min={1}
+            max={24}
+            step={1}
+            value={sliderVal}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="flex-1 accent-amber-400 cursor-pointer"
+          />
+          <span className="text-[10px] font-mono text-slate-400 shrink-0">24시간</span>
+        </div>
+      </div>
+
+      {/* Live Scheduled Deadline Preview */}
+      <div className="px-2.5 py-2 rounded-lg bg-slate-950/90 border border-amber-500/35 text-[11px] leading-snug">
+        {existingExpiresAt && !isModified ? (
+          <div className="text-slate-200 font-semibold">
+            🕒 현재 마감 예정 일시:{' '}
+            <span className="text-amber-300 font-bold">
+              {formatPreviewDateTimeKorean(existingExpiresAt)}
+            </span>{' '}
+            <span className="text-[10px] text-slate-400 block sm:inline sm:ml-1">
+              ({existingExpiresAt <= nowTs ? '이미 마감됨 · 위 버튼/슬라이더 변경 시 재설정' : '위 시간 선택 시 현재 시각 기준으로 재설정'})
+            </span>
+          </div>
+        ) : (
+          <div className="text-slate-200 font-semibold">
+            🕒 마감 예정 일시:{' '}
+            <span className="text-amber-300 font-bold">
+              {formatPreviewDateTimeKorean(previewDeadlineTs)}
+            </span>{' '}
+            <span className="text-sky-300 font-bold">
+              ({formatDurationRelativeNote(durationHours)})
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface DraftChoice {
   title: string;
@@ -591,34 +860,10 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
       </div>
 
       {/* 3. Duration / Timer Selection */}
-      <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-1.5">
-        <div className="flex items-center justify-between">
-          <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>투표 마감 시간 설정</span>
-          </label>
-          <span className="text-xs font-bold text-amber-400">
-            {DURATION_OPTIONS.find((d) => Math.abs(d.hours - selectedDurationHours) < 0.001)
-              ?.display || `${selectedDurationHours}시간 후 마감`}
-          </span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-1">
-          {DURATION_OPTIONS.map((opt) => (
-            <button
-              key={opt.label}
-              type="button"
-              onClick={() => setSelectedDurationHours(opt.hours)}
-              className={`py-1.5 px-1 rounded text-center text-[11px] font-bold transition cursor-pointer border ${
-                Math.abs(selectedDurationHours - opt.hours) < 0.001
-                  ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PollDurationSelector
+        durationHours={selectedDurationHours}
+        onChange={setSelectedDurationHours}
+      />
 
       {/* Private Code Option Toggle */}
       <div className="pt-2 border-t border-slate-700/60 space-y-2 text-xs">

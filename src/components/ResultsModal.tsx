@@ -21,7 +21,12 @@ import {
   ScrollText,
   Trophy,
 } from 'lucide-react';
-import { BETA_DISCLAIMER_TEXT, getPollWinnerSummary } from '../data/presetPolls';
+import {
+  BETA_DISCLAIMER_TEXT,
+  getPollWinnerSummary,
+  formatClosedDateTimeDot,
+  formatScheduledDeadlineKorean,
+} from '../data/presetPolls';
 import {
   renderWinnerCertificateCanvas,
   renderFinalResultsCanvas,
@@ -46,6 +51,8 @@ interface ResultsModalProps {
   userVoteId: string | null;
   nickname?: string;
   isClosed?: boolean;
+  expiresAt?: number | null;
+  isPermanent?: boolean;
   canClosePoll?: boolean;
   isLobbyDirectView?: boolean;
   onClosePollNow?: () => void | Promise<void>;
@@ -71,6 +78,8 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   userVoteId,
   nickname = '선거인',
   isClosed = false,
+  expiresAt = null,
+  isPermanent = false,
   canClosePoll = false,
   isLobbyDirectView = false,
   onClosePollNow,
@@ -285,6 +294,8 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
       candidates: displayedCandidates,
       winnerSummary,
       isClosed,
+      closedAt: expiresAt,
+      isPermanent,
     };
 
     const renderPromise =
@@ -305,7 +316,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isDocsModalOpen, docsTab, pollTitle, displayedCandidates, winnerSummary, isClosed]);
+  }, [isDocsModalOpen, docsTab, pollTitle, displayedCandidates, winnerSummary, isClosed, expiresAt, isPermanent]);
 
   const handleDownloadOfficialImage = async () => {
     sounds.playClick();
@@ -324,6 +335,8 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
       candidates: displayedCandidates,
       winnerSummary,
       isClosed,
+      closedAt: expiresAt,
+      isPermanent,
     };
     const canvas =
       docsTab === 'certificate'
@@ -376,8 +389,27 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
               </span>
 
               {isClosed && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-400/40 text-rose-200 text-[11px] font-extrabold">
-                  🏁 투표 마감 · 개표 완료
+                <>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-400/40 text-rose-200 text-[11px] font-extrabold">
+                    🏁 투표 마감 · 개표 완료
+                  </span>
+                  {expiresAt && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-800 border border-rose-500/40 text-rose-300 text-[11px] font-bold">
+                      🕒 {formatClosedDateTimeDot(expiresAt)}
+                    </span>
+                  )}
+                </>
+              )}
+
+              {!isClosed && isPermanent && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-emerald-200 text-[11px] font-bold">
+                  ♾️ 상시 운영 (기한 제한 없음)
+                </span>
+              )}
+
+              {!isClosed && !isPermanent && expiresAt && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/35 text-amber-200 text-[11px] font-semibold">
+                  🕒 {formatScheduledDeadlineKorean(expiresAt)}
                 </span>
               )}
 

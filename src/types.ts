@@ -31,6 +31,7 @@ export interface PollStation {
   createdAt: string;
   isCustom?: boolean;
   isOfficial?: boolean;
+  isPermanent?: boolean; // perpetual official poll (e.g. poll-lunch)
   expiresAt?: number; // timestamp in ms (null/undefined means perpetual)
   durationHours?: number; // selected duration in hours
   activeChannelIndex?: number; // current open channel (1, 2, 3...)
