@@ -23,7 +23,7 @@ export function getMultiplayerSessionId(): string {
   }
   return getSupabaseMultiplayerSessionId();
 }
-import { PollStation, Candidate, PollChannelData } from '../types';
+import { AvatarType, normalizeAvatarType, PollStation, Candidate, PollChannelData } from '../types';
 import {
   PRESET_POLLS,
   getAllPolls,
@@ -1514,7 +1514,7 @@ export function subscribeAllPollsRealtime(
 export interface RemotePlayer {
   userId: string;
   nickname: string;
-  avatarType: 'male' | 'female';
+  avatarType: AvatarType;
   x: number;
   z: number;
   rotY: number;
@@ -1528,7 +1528,7 @@ export interface RemotePlayer {
 export interface PlayerMovePayload {
   userId: string;
   nickname?: string;
-  avatarType?: 'male' | 'female';
+  avatarType?: AvatarType;
   x: number;
   z: number;
   rotY: number;
@@ -1552,7 +1552,7 @@ export interface EmotePayload {
 
 export interface PlayerStateInput {
   nickname?: string;
-  avatarType?: 'male' | 'female';
+  avatarType?: AvatarType;
   x: number;
   z: number;
   rotY: number;
@@ -1570,7 +1570,7 @@ export interface MultiplayerRoomHandle {
       rotY: number,
       isMoving: boolean,
       nickname?: string,
-      avatarType?: 'male' | 'female'
+      avatarType?: AvatarType
     ): void;
     (state: PlayerStateInput): void;
   };
@@ -1580,7 +1580,7 @@ export interface MultiplayerRoomHandle {
     rotY: number,
     isMoving: boolean,
     nickname?: string,
-    avatarType?: 'male' | 'female'
+    avatarType?: AvatarType
   ) => void;
   broadcastVote: (nickname: string, candidateId: string) => void;
   sendEmote: (emoji: string, text: string, emoteId?: EmoteId) => void;
@@ -1603,7 +1603,7 @@ export function joinMultiplayerRoom(
   localPlayer: {
     userId: string;
     nickname: string;
-    avatarType: 'male' | 'female';
+    avatarType: AvatarType;
     x: number;
     z: number;
     rotY: number;
@@ -1679,7 +1679,7 @@ export function joinMultiplayerRoom(
     return {
       userId,
       nickname: typeof raw?.nickname === 'string' && raw.nickname.trim() ? raw.nickname : '선거인',
-      avatarType: raw?.avatarType === 'female' ? 'female' : 'male',
+      avatarType: normalizeAvatarType(raw?.avatarType),
       x: Number.isFinite(rawX) ? rawX : -6.5,
       z: Number.isFinite(rawZ) ? rawZ : 0.5,
       rotY: Number.isFinite(rawRotY) ? rawRotY : 0,
@@ -1824,7 +1824,7 @@ export function joinMultiplayerRoom(
           const initialPayload = {
             userId: localPlayer.userId,
             nickname: localPlayer.nickname,
-            avatarType: localPlayer.avatarType,
+            avatarType: normalizeAvatarType(localPlayer.avatarType),
             x: safeX,
             z: safeZ,
             rotY: safeRotY,
@@ -1879,7 +1879,7 @@ export function joinMultiplayerRoom(
         payload: {
           userId: localPlayer.userId,
           nickname: state.nickname || localPlayer.nickname,
-          avatarType: state.avatarType || localPlayer.avatarType,
+          avatarType: normalizeAvatarType(state.avatarType || localPlayer.avatarType),
           x,
           z,
           rotY: Number.isFinite(rotY) ? rotY : 0,
@@ -1913,7 +1913,7 @@ export function joinMultiplayerRoom(
       arg3?: number,
       arg4?: boolean,
       arg5?: string,
-      arg6?: 'male' | 'female'
+      arg6?: AvatarType
     ) => {
       if (typeof arg1 === 'object' && arg1 !== null) {
         sendStateBroadcast(arg1);
@@ -1935,7 +1935,7 @@ export function joinMultiplayerRoom(
       rotY: number,
       isMoving: boolean,
       nickname?: string,
-      avatarType?: 'male' | 'female'
+      avatarType?: AvatarType
     ) => {
       sendStateBroadcast({
         x,

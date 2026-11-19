@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { AvatarType, PollStation, Candidate } from '../types';
+import {
+  AvatarType,
+  AVATAR_TYPES,
+  AVATAR_META,
+  AVATAR_STORAGE_KEY,
+  normalizeAvatarType,
+  PollStation,
+  Candidate,
+} from '../types';
 import { sounds } from '../sound';
+import { AvatarIllustration } from './AvatarIllustration';
 import {
   generateRandomNickname,
   getAllPolls,
@@ -55,6 +64,7 @@ import {
 
 interface AvatarSelectModalProps {
   initialPollId?: string | null;
+  currentAvatarType?: AvatarType;
   externalPolls?: PollStation[];
   onPollsUpdated?: (polls: PollStation[]) => void;
   onOpenResultsDirect?: (poll: PollStation, openOfficialDocs?: boolean) => void;
@@ -63,14 +73,28 @@ interface AvatarSelectModalProps {
 
 export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
   initialPollId,
+  currentAvatarType,
   externalPolls,
   onPollsUpdated,
   onOpenResultsDirect,
   onEnter,
 }) => {
-  // 1. Nickname state with auto-generation
+  // 1. Nickname state with auto-generation & 6-variant avatar selection with legacy fallback
   const [nickname, setNickname] = useState<string>(() => generateRandomNickname());
-  const [selectedAvatar, setSelectedAvatar] = useState<AvatarType>('male');
+  const [selectedAvatar, setSelectedAvatar] = useState<AvatarType>(() => {
+    if (currentAvatarType) return normalizeAvatarType(currentAvatarType);
+    try {
+      return normalizeAvatarType(localStorage.getItem(AVATAR_STORAGE_KEY));
+    } catch {
+      return 'male_1';
+    }
+  });
+
+  useEffect(() => {
+    if (currentAvatarType) {
+      setSelectedAvatar(normalizeAvatarType(currentAvatarType));
+    }
+  }, [currentAvatarType]);
 
   // 2. Polls & Tabs
   const [polls, setPolls] = useState<PollStation[]>(() =>
@@ -1084,61 +1108,71 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
           )}
         </div>
 
-        {/* 3. Avatar Choice Cards */}
+        {/* 3. Avatar Choice Cards (Compact 3x2 Grid: Male 3 + Female 3) */}
         <div className="mb-5">
-          <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-            아바타 선택 (Character Choice)
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            {/* Option A: Male */}
-            <button
-              type="button"
-              onClick={() => {
-                sounds.playClick();
-                setSelectedAvatar('male');
-              }}
-              className={`relative flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedAvatar === 'male'
-                  ? 'bg-sky-950/60 border-sky-400 ring-2 ring-sky-500/30'
-                  : 'bg-slate-800/60 border-slate-700 hover:bg-slate-800'
-              }`}
-            >
-              <div className="w-12 h-12 rounded-full bg-slate-800 border border-sky-400/40 flex items-center justify-center shrink-0 relative overflow-hidden">
-                <div className="w-6 h-6 rounded-full bg-[#ffdfc4] relative -top-1">
-                  <div className="absolute -top-1 inset-x-0 h-3 bg-[#221f1e] rounded-t-full" />
-                </div>
-                <div className="absolute bottom-0 w-8 h-4 bg-[#1e3a8a] rounded-t-md" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-white">성인 남성 아바타</p>
-                <p className="text-[11px] text-slate-400">네이비 셔츠 · 단정 숏컷</p>
-              </div>
-            </button>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              아바타 선택 (남 3종 · 여 3종)
+            </label>
+            <span className="text-[11px] font-semibold text-rose-300">
+              선택됨: {AVATAR_META[selectedAvatar].fullName}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {AVATAR_TYPES.map((avatarId) => {
+              const meta = AVATAR_META[avatarId];
+              const isSelected = selectedAvatar === avatarId;
+              return (
+                <button
+                  key={avatarId}
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setSelectedAvatar(avatarId);
+                    try {
+                      localStorage.setItem(AVATAR_STORAGE_KEY, avatarId);
+                    } catch {
+                      // ignore storage error
+                    }
+                  }}
+                  className={`relative flex flex-col items-center justify-center gap-1 px-1.5 py-2.5 sm:p-2.5 rounded-xl border text-center transition-all cursor-pointer active:scale-[0.98] ${
+                    isSelected
+                      ? 'bg-rose-950/35 border-rose-500 ring-2 ring-rose-500/40 shadow-md shadow-rose-950/30'
+                      : 'bg-slate-800/60 border-slate-700/80 hover:bg-slate-800 hover:border-slate-500'
+                  }`}
+                >
+                  {isSelected && (
+                    <span
+                      className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-sm"
+                      aria-hidden="true"
+                    >
+                      <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    </span>
+                  )}
 
-            {/* Option B: Female */}
-            <button
-              type="button"
-              onClick={() => {
-                sounds.playClick();
-                setSelectedAvatar('female');
-              }}
-              className={`relative flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedAvatar === 'female'
-                  ? 'bg-amber-950/50 border-amber-400 ring-2 ring-amber-500/30'
-                  : 'bg-slate-800/60 border-slate-700 hover:bg-slate-800'
-              }`}
-            >
-              <div className="w-12 h-12 rounded-full bg-slate-800 border border-amber-400/40 flex items-center justify-center shrink-0 relative overflow-hidden">
-                <div className="w-6 h-6 rounded-full bg-[#ffdfc4] relative -top-1">
-                  <div className="absolute -top-1 -inset-x-1 h-4 bg-[#3d271d] rounded-t-full" />
-                </div>
-                <div className="absolute bottom-0 w-8 h-4 bg-[#d6bba2] rounded-t-md" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-white">성인 여성 아바타</p>
-                <p className="text-[11px] text-slate-400">베이지 니트 · 볼륨 단발</p>
-              </div>
-            </button>
+                  <div
+                    className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full overflow-hidden shrink-0 border-2 transition-transform ${
+                      isSelected ? 'border-rose-400 scale-105' : 'border-slate-600/80'
+                    }`}
+                  >
+                    <AvatarIllustration avatarType={avatarId} className="w-full h-full" />
+                  </div>
+
+                  <div className="w-full">
+                    <p
+                      className={`text-[11px] sm:text-xs font-extrabold leading-tight ${
+                        isSelected ? 'text-white' : 'text-slate-200'
+                      }`}
+                    >
+                      {meta.shortName}
+                    </p>
+                    <p className="text-[9.5px] sm:text-[10px] text-slate-400 leading-tight mt-0.5 whitespace-normal break-keep">
+                      {meta.subtitle}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 

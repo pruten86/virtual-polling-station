@@ -3,7 +3,15 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import confetti from 'canvas-confetti';
 
-import { AvatarType, Candidate, StationZone, PollStation, PollChannelData } from './types';
+import {
+  AvatarType,
+  AVATAR_STORAGE_KEY,
+  normalizeAvatarType,
+  Candidate,
+  StationZone,
+  PollStation,
+  PollChannelData,
+} from './types';
 import { sounds, playEmoteSound } from './sound';
 import {
   createProceduralAvatar,
@@ -175,7 +183,13 @@ export default function App() {
   const [hasEntered, setHasEntered] = useState<boolean>(false);
   const [isLobbyOpen, setIsLobbyOpen] = useState<boolean>(false);
   const [nickname, setNickname] = useState<string>(() => generateRandomNickname());
-  const [avatarType, setAvatarType] = useState<AvatarType>('male');
+  const [avatarType, setAvatarType] = useState<AvatarType>(() => {
+    try {
+      return normalizeAvatarType(localStorage.getItem(AVATAR_STORAGE_KEY));
+    } catch {
+      return 'male_1';
+    }
+  });
 
   // All Polls (synced with Supabase DB for Lobby & Realtime)
   const [allPolls, setAllPolls] = useState<PollStation[]>(() => getAllPolls());
@@ -306,7 +320,7 @@ export default function App() {
         controller: CharacterController;
         nameTag: THREE.Sprite;
         nickname: string;
-        avatarType: 'male' | 'female';
+        avatarType: AvatarType;
         targetX: number;
         targetZ: number;
         targetRotY: number;
@@ -686,12 +700,13 @@ export default function App() {
       const parsedRotY = Number(peer.rotY);
       const hasValidCoords = Number.isFinite(parsedX) && Number.isFinite(parsedZ);
 
+      const normalizedPeerAvatar = normalizeAvatarType(peer.avatarType);
       const existing = currentMap.get(peer.userId);
       if (!existing) {
         if (!hasValidCoords) return;
 
         const safeRotY = Number.isFinite(parsedRotY) ? parsedRotY : 0;
-        const controller = createProceduralAvatar(peer.avatarType);
+        const controller = createProceduralAvatar(normalizedPeerAvatar, peer.userId);
         controller.group.position.set(parsedX, 0, parsedZ);
         controller.lookAtAngle(safeRotY);
 
@@ -713,7 +728,7 @@ export default function App() {
           controller,
           nameTag,
           nickname: peer.nickname || '선거인',
-          avatarType: peer.avatarType,
+          avatarType: normalizedPeerAvatar,
           targetX: parsedX,
           targetZ: parsedZ,
           targetRotY: safeRotY,
@@ -722,6 +737,26 @@ export default function App() {
           lastEmoteSeq: initialEmoteSeq,
         });
       } else {
+        // Live-swap remote peer's 3D model if they switched between the 6 avatar variants
+        if (normalizedPeerAvatar !== existing.avatarType) {
+          const prevPos = existing.controller.group.position.clone();
+          const prevRotY = existing.controller.group.rotation.y;
+          existing.controller.group.remove(existing.nameTag);
+          if (sceneRef.current) {
+            sceneRef.current.remove(existing.controller.group);
+          }
+
+          const nextController = createProceduralAvatar(normalizedPeerAvatar, peer.userId);
+          nextController.group.position.copy(prevPos);
+          nextController.lookAtAngle(prevRotY);
+          nextController.group.add(existing.nameTag);
+
+          if (sceneRef.current) {
+            sceneRef.current.add(nextController.group);
+          }
+          existing.controller = nextController;
+          existing.avatarType = normalizedPeerAvatar;
+        }
         if (peer.nickname && peer.nickname !== existing.nickname) {
           existing.controller.group.remove(existing.nameTag);
           const nextTag = createNameTagSprite(peer.nickname);
@@ -1242,21 +1277,22 @@ export default function App() {
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMappingExposure = 1.02;
     container.appendChild(renderer.domElement);
 
-    // 2. Scene Setup
+    // 2. Scene Setup (Warm sunlit clay diorama backdrop)
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f172a);
+    scene.background = new THREE.Color(0xe6ddd0);
     sceneRef.current = scene;
 
-    // Room Environment for soft natural reflections
+    // Room Environment at gentle intensity so matte clay keeps rich pastel saturation
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const envTexture = pmremGenerator.fromScene(new RoomEnvironment()).texture;
     scene.environment = envTexture;
+    scene.environmentIntensity = 0.35;
     pmremGenerator.dispose();
 
-    // 3. Camera Setup (Quarter-view / Isometric angle)
+    // 3. Camera Setup (Quarter-view / Isometric angle — exact coordinates preserved)
     const camera = new THREE.PerspectiveCamera(
       45,
       container.clientWidth / container.clientHeight,
@@ -1268,28 +1304,26 @@ export default function App() {
     camera.lookAt(-6.0, 0.8, -0.5);
     cameraRef.current = camera;
 
-    // 4. Balanced Lighting Rig (Prevents furniture/floor whiteout)
-    const ambientLight = new THREE.AmbientLight(0xfff7ed, 0.65);
-    scene.add(ambientLight);
+    // 4. Warm Afternoon Sunlight Lighting Rig (Cozy clay diorama feel, zero whiteout)
+    const hemiLight = new THREE.HemisphereLight(0xfff7eb, 0xe8d5c0, 0.85);
+    hemiLight.position.set(0, 20, 0);
+    scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
-    dirLight.position.set(10, 16, 12);
+    const dirLight = new THREE.DirectionalLight(0xfff1dc, 0.95);
+    dirLight.position.set(11, 15, 11);
     dirLight.castShadow = !isSoftwareGl;
-    dirLight.shadow.mapSize.width = 1024;
-    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.mapSize.width = isSoftwareGl ? 1024 : 2048;
+    dirLight.shadow.mapSize.height = isSoftwareGl ? 1024 : 2048;
     dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 40;
+    dirLight.shadow.camera.far = 42;
     dirLight.shadow.camera.left = -15;
     dirLight.shadow.camera.right = 15;
     dirLight.shadow.camera.top = 15;
     dirLight.shadow.camera.bottom = -15;
-    dirLight.shadow.bias = -0.0005;
+    dirLight.shadow.bias = -0.0004;
+    dirLight.shadow.normalBias = 0.02;
+    dirLight.shadow.radius = 3.5;
     scene.add(dirLight);
-
-    // Soft warm/cool fill light for depth without harsh glare
-    const fillLight = new THREE.DirectionalLight(0xdbeafe, 0.35);
-    fillLight.position.set(-12, 10, -8);
-    scene.add(fillLight);
 
     // 5. Build Polling Station Architecture
     const envResult = buildPollingStationEnvironment();
@@ -1574,6 +1608,8 @@ export default function App() {
     return () => {
       cancelAnimationFrame(frameId);
       window.removeEventListener('resize', handleResize);
+      scene.remove(hemiLight, dirLight);
+      envTexture.dispose();
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
@@ -1608,8 +1644,24 @@ export default function App() {
 
   // Handle Entrance or Polling Station Switch from Avatar/Lobby Modal
   const handleEnterWorld = (selectedNickname: string, selectedAvatar: AvatarType, selectedPoll: PollStation) => {
+    const normalizedSelected = normalizeAvatarType(selectedAvatar);
     setNickname(selectedNickname);
-    setAvatarType(selectedAvatar);
+    setAvatarType(normalizedSelected);
+    try {
+      localStorage.setItem(AVATAR_STORAGE_KEY, normalizedSelected);
+    } catch {
+      // ignore storage error
+    }
+    if (roomHandleRef.current?.isSubscribed() && playerRef.current) {
+      roomHandleRef.current.sendPlayerState({
+        nickname: selectedNickname,
+        avatarType: normalizedSelected,
+        x: playerRef.current.group.position.x,
+        z: playerRef.current.group.position.z,
+        rotY: playerRef.current.group.rotation.y,
+        isMoving: isMovingRef.current,
+      });
+    }
 
     if (!authUserId) {
       ensureAnonymousAuth().then((uid) => {
@@ -1788,6 +1840,7 @@ export default function App() {
               );
             });
           }}
+          currentAvatarType={avatarType}
           onEnter={handleEnterWorld}
         />
       )}

@@ -22,49 +22,152 @@ export interface EnvironmentResult {
   ballotBoxMesh: THREE.Group;
 }
 
-// Procedural Canvas Texture for High-Resolution Wooden Floor
-function createWoodFloorTexture(): THREE.CanvasTexture {
+// ========================================================
+// Rounded Geometry Helpers (Clay / Diorama Soft Silhouettes)
+// ========================================================
+function createRoundedRectShape(width: number, height: number, radius: number): THREE.Shape {
+  const shape = new THREE.Shape();
+  const hw = width / 2;
+  const hh = height / 2;
+  const r = Math.min(radius, hw * 0.9, hh * 0.9);
+
+  shape.moveTo(-hw + r, -hh);
+  shape.lineTo(hw - r, -hh);
+  shape.quadraticCurveTo(hw, -hh, hw, -hh + r);
+  shape.lineTo(hw, hh - r);
+  shape.quadraticCurveTo(hw, hh, hw - r, hh);
+  shape.lineTo(-hw + r, hh);
+  shape.quadraticCurveTo(-hw, hh, -hw, hh - r);
+  shape.lineTo(-hw, -hh + r);
+  shape.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
+  return shape;
+}
+
+/**
+ * Horizontal rounded slab (rounded corners in X-Z plane, thickness along Y).
+ * Ideal for wooden tabletops, ballot box body/lid, rugs, and plinths.
+ */
+function createRoundedSlabGeometry(
+  width: number,
+  height: number,
+  depth: number,
+  cornerRadius: number,
+  bevelSize = 0.02
+): THREE.BufferGeometry {
+  const b = Math.min(bevelSize, height * 0.35, width * 0.15, depth * 0.15);
+  const innerW = Math.max(0.02, width - b * 2);
+  const innerD = Math.max(0.02, depth - b * 2);
+  const innerH = Math.max(0.005, height - b * 2);
+  const shape = createRoundedRectShape(innerW, innerD, Math.max(0.01, cornerRadius - b));
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: innerH,
+    bevelEnabled: b > 0.001,
+    bevelThickness: b,
+    bevelSize: b,
+    bevelSegments: 3,
+    curveSegments: 10,
+  });
+  geo.rotateX(-Math.PI / 2);
+  geo.center();
+  return geo;
+}
+
+/**
+ * Vertical rounded panel (rounded corners in X-Y plane, thickness along Z).
+ * Ideal for billboard casing, pastel room partitions, and rounded signboards.
+ */
+function createRoundedPanelGeometry(
+  width: number,
+  height: number,
+  depth: number,
+  cornerRadius: number,
+  bevelSize = 0.02
+): THREE.BufferGeometry {
+  const b = Math.min(bevelSize, depth * 0.35, width * 0.15, height * 0.15);
+  const innerW = Math.max(0.02, width - b * 2);
+  const innerH = Math.max(0.02, height - b * 2);
+  const innerD = Math.max(0.005, depth - b * 2);
+  const shape = createRoundedRectShape(innerW, innerH, Math.max(0.01, cornerRadius - b));
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: innerD,
+    bevelEnabled: b > 0.001,
+    bevelThickness: b,
+    bevelSize: b,
+    bevelSegments: 3,
+    curveSegments: 10,
+  });
+  geo.center();
+  return geo;
+}
+
+// Deterministic pseudo-random helper so procedural textures look clean and repeatable
+function seededNoise(seed: number): number {
+  const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// ========================================================
+// Procedural Warm Wood & Matte Fabric Canvas Textures
+// ========================================================
+
+// Warm Light Oak Wood Floor Texture (Entrance & Waiting Aisle)
+function createWarmOakFloorTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 1024;
   const ctx = canvas.getContext('2d')!;
 
-  // Base warm maple tone
-  ctx.fillStyle = '#eedec5';
+  ctx.fillStyle = '#E6CEB0';
   ctx.fillRect(0, 0, 1024, 1024);
 
-  // Parquet plank grid
   const plankH = 64;
   const plankW = 256;
 
-  for (let y = 0; y < 1024; y += plankH) {
-    const shift = (Math.floor(y / plankH) % 2) * (plankW / 2);
-    for (let x = -shift; x < 1024 + shift; x += plankW) {
-      // Slight plank shade variation
-      const shade = (Math.random() - 0.5) * 16;
-      ctx.fillStyle = `rgb(${238 + shade}, ${222 + shade * 0.9}, ${197 + shade * 0.8})`;
+  for (let row = 0; row < 1024 / plankH; row++) {
+    const y = row * plankH;
+    const shift = (row % 2) * (plankW / 2);
+    for (let col = -1; col <= 1024 / plankW + 1; col++) {
+      const x = col * plankW - shift;
+      const n = seededNoise(row * 31 + col * 17) - 0.5;
+
+      // Soft warm honey-oak variation
+      const r = Math.round(231 + n * 16);
+      const g = Math.round(205 + n * 14);
+      const b = Math.round(172 + n * 12);
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
       ctx.fillRect(x + 1, y + 1, plankW - 2, plankH - 2);
 
-      // Subtle wood grain lines
-      ctx.fillStyle = 'rgba(180, 150, 120, 0.15)';
-      for (let g = 0; g < 4; g++) {
-        ctx.fillRect(x + Math.random() * plankW, y + 4 + g * 14, Math.random() * 80 + 30, 1.5);
+      // Gentle wood grain wisps
+      ctx.fillStyle = 'rgba(168, 129, 88, 0.12)';
+      for (let gIdx = 0; gIdx < 5; gIdx++) {
+        const gx = x + seededNoise(row * 73 + col * 19 + gIdx * 7) * (plankW - 40);
+        const gy = y + 6 + gIdx * 11;
+        const gw = 40 + seededNoise(row * 29 + gIdx * 11) * 90;
+        ctx.fillRect(gx, gy, gw, 1.5);
       }
+
+      // Soft highlight along upper plank bevel
+      ctx.fillStyle = 'rgba(255, 248, 236, 0.18)';
+      ctx.fillRect(x + 2, y + 2, plankW - 4, 2);
     }
   }
 
-  // Plank grout seams
-  ctx.strokeStyle = 'rgba(140, 115, 90, 0.45)';
-  ctx.lineWidth = 1.5;
+  // Soft warm plank seams
+  ctx.strokeStyle = 'rgba(158, 125, 92, 0.34)';
+  ctx.lineWidth = 1.6;
   for (let y = 0; y <= 1024; y += plankH) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(1024, y);
     ctx.stroke();
   }
-  for (let y = 0; y < 1024; y += plankH) {
-    const shift = (Math.floor(y / plankH) % 2) * (plankW / 2);
-    for (let x = -shift; x <= 1024 + shift; x += plankW) {
+  for (let row = 0; row < 1024 / plankH; row++) {
+    const y = row * plankH;
+    const shift = (row % 2) * (plankW / 2);
+    for (let col = -1; col <= 1024 / plankW + 1; col++) {
+      const x = col * plankW - shift;
       ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(x, y + plankH);
@@ -75,100 +178,123 @@ function createWoodFloorTexture(): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(4, 4);
+  texture.repeat.set(4.5, 3.8);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
-// Procedural Canvas Texture for Main Banner
-function createBannerTexture(): THREE.CanvasTexture {
+// Matte Light-Beige Woven Mat Texture (Central Polling Area)
+function createCentralBeigeMatTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = 1200;
-  canvas.height = 240;
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d')!;
 
-  // Clean White Background with soft border
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, 1200, 240);
+  ctx.fillStyle = '#F2EAE0';
+  ctx.fillRect(0, 0, 512, 512);
 
-  // Top and bottom official color stripes (Blue & Green)
-  ctx.fillStyle = '#0284c7';
-  ctx.fillRect(0, 0, 1200, 16);
-  ctx.fillStyle = '#16a34a';
-  ctx.fillRect(0, 224, 1200, 16);
+  // Subtle woven linen grain
+  for (let y = 0; y < 512; y += 8) {
+    ctx.fillStyle = y % 16 === 0 ? 'rgba(216, 200, 180, 0.22)' : 'rgba(255, 251, 246, 0.28)';
+    ctx.fillRect(0, y, 512, 3);
+  }
+  for (let x = 0; x < 512; x += 8) {
+    ctx.fillStyle = x % 16 === 0 ? 'rgba(210, 193, 173, 0.16)' : 'rgba(255, 252, 247, 0.2)';
+    ctx.fillRect(x, 0, 3, 512);
+  }
 
-  // Official Election Emblem Mark
-  ctx.fillStyle = '#0284c7';
-  ctx.beginPath();
-  ctx.arc(80, 120, 42, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 36px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('선거', 80, 120);
-
-  // Main Banner Title
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 52px "Pretendard", "Noto Sans KR", sans-serif';
-  ctx.fillText('제1회 즐거운 점심 메뉴 모의투표소', 150, 95);
-
-  ctx.fillStyle = '#475569';
-  ctx.font = '500 28px "Pretendard", "Noto Sans KR", sans-serif';
-  ctx.fillText('서울특별시 가상 제1투표구  |  소중한 한 표, 맛있는 선택!', 150, 155);
-
-  // Right side stamp mark
-  ctx.strokeStyle = '#dc2626';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(1020, 50, 130, 130);
-  ctx.fillStyle = '#dc2626';
-  ctx.font = 'bold 24px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('모의선거', 1085, 100);
-  ctx.fillText('관리위원회', 1085, 135);
+  // Soft speckling for tactile clay-diorama feel
+  for (let i = 0; i < 650; i++) {
+    const sx = seededNoise(i * 13.1) * 512;
+    const sy = seededNoise(i * 29.7) * 512;
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(195, 176, 154, 0.14)' : 'rgba(255, 255, 255, 0.22)';
+    ctx.fillRect(sx, sy, 2.5, 2.5);
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(6, 4);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
-// Procedural Sign Canvas Maker
-function createSignTexture(title: string, sub: string, bgColor = '#0284c7'): THREE.CanvasTexture {
+// Warm Light-Wood Wainscoting Beadboard Texture
+function createWainscotingTexture(repeatX: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = '#E2C39D';
   ctx.fillRect(0, 0, 512, 256);
 
-  // Header band
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, 512, 80);
+  const slatW = 32;
+  for (let x = 0; x < 512; x += slatW) {
+    const shade = (seededNoise(x * 0.37) - 0.5) * 10;
+    ctx.fillStyle = `rgb(${Math.round(226 + shade)}, ${Math.round(195 + shade * 0.9)}, ${Math.round(157 + shade * 0.8)})`;
+    ctx.fillRect(x + 1, 0, slatW - 2, 256);
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 36px "Pretendard", "Noto Sans KR", sans-serif';
+    // Subtle groove shadow + highlight
+    ctx.fillStyle = 'rgba(156, 118, 80, 0.32)';
+    ctx.fillRect(x, 0, 2, 256);
+    ctx.fillStyle = 'rgba(255, 246, 234, 0.22)';
+    ctx.fillRect(x + 2, 0, 1.5, 256);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(repeatX, 1);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+// Warm Diorama Sign Canvas Maker (Pastel header pill + warm cream card)
+function createSignTexture(title: string, sub: string, bgColor = '#5DAE74'): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#FFFBF5';
+  ctx.fillRect(0, 0, 512, 256);
+
+  // Soft warm border
+  ctx.strokeStyle = '#E6D6C3';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, 502, 246);
+
+  // Rounded pastel header band
+  ctx.fillStyle = bgColor;
+  ctx.beginPath();
+  ctx.roundRect(18, 18, 476, 80, 18);
+  ctx.fill();
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 34px "Pretendard", "Noto Sans KR", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(title, 256, 42);
+  ctx.fillText(title, 256, 59);
 
-  // Body text
-  ctx.fillStyle = '#1e293b';
-  ctx.font = '600 28px "Pretendard", "Noto Sans KR", sans-serif';
-  ctx.fillText(sub, 256, 140);
+  // Body text in warm cocoa
+  ctx.fillStyle = '#3F3128';
+  ctx.font = '700 26px "Pretendard", "Noto Sans KR", sans-serif';
+  ctx.fillText(sub, 256, 150);
 
-  ctx.fillStyle = '#64748b';
-  ctx.font = '400 20px "Pretendard", "Noto Sans KR", sans-serif';
-  ctx.fillText('가상선거관리위원회', 256, 205);
+  ctx.fillStyle = '#8C7A6B';
+  ctx.font = '600 20px "Pretendard", "Noto Sans KR", sans-serif';
+  ctx.fillText('보트버스 가상선거관리위원회', 256, 208);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
+// ========================================================
 // Procedural Korean Flag (Taegeukgi) following exact National Flag Act (국기법) proportions
+// NOTE: Strictly preserved verbatim without modification.
+// ========================================================
 function createKoreanFlagTexture(): THREE.CanvasTexture {
   const width = 900;
   const height = 600;
@@ -272,72 +398,330 @@ function createKoreanFlagTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+// ========================================================
+// Miniature Clay Potted Plant Helper (Corner Diorama Accent)
+// ========================================================
+function createClayPottedPlant(): THREE.Group {
+  const group = new THREE.Group();
+
+  const potMat = new THREE.MeshStandardMaterial({
+    color: 0xd98a6c, // Warm clay terracotta
+    roughness: 0.85,
+    metalness: 0.0,
+  });
+  const soilMat = new THREE.MeshStandardMaterial({
+    color: 0x6e5443,
+    roughness: 0.95,
+  });
+  const leafMat1 = new THREE.MeshStandardMaterial({
+    color: 0x6db37f,
+    roughness: 0.82,
+    metalness: 0.0,
+  });
+  const leafMat2 = new THREE.MeshStandardMaterial({
+    color: 0x8cc896,
+    roughness: 0.82,
+    metalness: 0.0,
+  });
+
+  const potBody = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.17, 0.36, 18), potMat);
+  potBody.position.y = 0.18;
+  potBody.castShadow = true;
+  potBody.receiveShadow = true;
+  group.add(potBody);
+
+  const potRim = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.032, 10, 20), potMat);
+  potRim.rotation.x = Math.PI / 2;
+  potRim.position.y = 0.35;
+  potRim.castShadow = true;
+  group.add(potRim);
+
+  const soil = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.04, 16), soilMat);
+  soil.position.y = 0.34;
+  group.add(soil);
+
+  // Sculpted rounded clay foliage puffs
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.03, 0.04, 0.42, 10),
+    new THREE.MeshStandardMaterial({ color: 0x8a6548, roughness: 0.85 })
+  );
+  stem.position.y = 0.54;
+  stem.castShadow = true;
+  group.add(stem);
+
+  const puffs: [number, number, number, number, boolean][] = [
+    [0, 0.86, 0, 0.26, false],
+    [-0.17, 0.72, 0.1, 0.18, true],
+    [0.18, 0.74, -0.08, 0.19, false],
+    [0.05, 0.72, 0.16, 0.17, true],
+    [-0.08, 0.98, -0.05, 0.16, true],
+  ];
+  puffs.forEach(([x, y, z, r, alt]) => {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 12), alt ? leafMat2 : leafMat1);
+    puff.position.set(x, y, z);
+    puff.scale.set(1.05, 0.92, 1.05);
+    puff.castShadow = true;
+    puff.receiveShadow = true;
+    group.add(puff);
+  });
+
+  return group;
+}
+
+// ========================================================
+// Cozy Pastel Low Partition Helper (Soft Matte Clay Panels)
+// ========================================================
+function createPastelPartition(
+  width: number,
+  height: number,
+  colorHex: number,
+  woodMat: THREE.Material
+): THREE.Group {
+  const group = new THREE.Group();
+
+  const panelMat = new THREE.MeshStandardMaterial({
+    color: colorHex,
+    roughness: 0.84,
+    metalness: 0.0,
+  });
+
+  const panel = new THREE.Mesh(
+    createRoundedPanelGeometry(width, height - 0.1, 0.1, 0.12, 0.025),
+    panelMat
+  );
+  panel.position.y = height / 2 + 0.04;
+  panel.castShadow = true;
+  panel.receiveShadow = true;
+  group.add(panel);
+
+  // Warm oak top cap rail
+  const topCap = new THREE.Mesh(
+    createRoundedSlabGeometry(width + 0.04, 0.06, 0.13, 0.05, 0.015),
+    woodMat
+  );
+  topCap.position.y = height + 0.01;
+  topCap.castShadow = true;
+  group.add(topCap);
+
+  // Cute stubby wooden feet
+  const footGeo = new THREE.CylinderGeometry(0.045, 0.055, 0.12, 12);
+  const footOffset = Math.max(0.25, width / 2 - 0.24);
+  [-footOffset, footOffset].forEach((fx) => {
+    const foot = new THREE.Mesh(footGeo, woodMat);
+    foot.position.set(fx, 0.06, 0);
+    foot.castShadow = true;
+    group.add(foot);
+  });
+
+  return group;
+}
+
 export function buildPollingStationEnvironment(): EnvironmentResult {
   const sceneGroup = new THREE.Group();
 
-  // Reusable Materials
-  const wallMat = new THREE.MeshStandardMaterial({
-    color: 0xf8fafc,
-    roughness: 0.9,
+  // ========================================================
+  // Shared Warm Matte Clay & Light-Oak Diorama Materials
+  // ========================================================
+  const creamWallMat = new THREE.MeshStandardMaterial({
+    color: 0xf4ece1, // Warm cream ivory
+    roughness: 0.88,
+    metalness: 0.0,
+  });
+
+  const lightOakMat = new THREE.MeshStandardMaterial({
+    color: 0xdfbc92, // Warm honey light oak
+    roughness: 0.68,
+    metalness: 0.0,
+  });
+
+  const mediumOakMat = new THREE.MeshStandardMaterial({
+    color: 0xcba175, // Slightly deeper oak trim/legs
+    roughness: 0.72,
+    metalness: 0.0,
+  });
+
+  const warmCreamMat = new THREE.MeshStandardMaterial({
+    color: 0xfaf4eb, // Matte porcelain cream
+    roughness: 0.82,
+    metalness: 0.0,
+  });
+
+  const softSandFrameMat = new THREE.MeshStandardMaterial({
+    color: 0xefe3d2, // Warm sand-cream booth frame
+    roughness: 0.74,
     metalness: 0.02,
   });
 
-  const baseboardMat = new THREE.MeshStandardMaterial({
-    color: 0x475569,
-    roughness: 0.7,
+  const sageGreenMat = new THREE.MeshStandardMaterial({
+    color: 0x5dae74, // Friendly soft sage green (Ballot Box & Exit)
+    roughness: 0.76,
+    metalness: 0.0,
   });
 
-  const aluminumMat = new THREE.MeshStandardMaterial({
-    color: 0xd1d5db,
-    roughness: 0.35,
-    metalness: 0.85,
+  const pastelMintMat = new THREE.MeshStandardMaterial({
+    color: 0xb6dec6,
+    roughness: 0.84,
+    metalness: 0.0,
   });
 
-  const deskTopMat = new THREE.MeshStandardMaterial({
-    color: 0xf1f5f9,
-    roughness: 0.5,
+  const coralAccentMat = new THREE.MeshStandardMaterial({
+    color: 0xe36b6b, // Warm coral-red seals & stamp
+    roughness: 0.65,
+    metalness: 0.0,
   });
 
-  // 1. Floor (22m x 18m)
+  // ========================================================
+  // 1. Dual-Zone Floor (22m x 18m)
+  //    - Full warm light-oak wood planks (clearly visible in entrance/waiting aisle)
+  //    - Central matte light-beige woven polling mat
+  // ========================================================
   const floorGeo = new THREE.PlaneGeometry(22, 18);
-  const floorTexture = createWoodFloorTexture();
+  const floorTexture = createWarmOakFloorTexture();
   const floorMat = new THREE.MeshStandardMaterial({
     map: floorTexture,
-    roughness: 0.45,
-    metalness: 0.05,
+    roughness: 0.72,
+    metalness: 0.0,
   });
   const floorMesh = new THREE.Mesh(floorGeo, floorMat);
   floorMesh.rotation.x = -Math.PI / 2;
   floorMesh.receiveShadow = true;
   sceneGroup.add(floorMesh);
 
-  // 2. Boundary Walls (Back wall and Left wall)
-  // Back Wall (Z = -9)
-  const backWallGeo = new THREE.BoxGeometry(22, 5.5, 0.4);
-  const backWall = new THREE.Mesh(backWallGeo, wallMat);
+  // Central Light-Beige Matte Polling Area Mat (rounded corners, subtle woven texture)
+  const matBorderGeo = new THREE.ShapeGeometry(createRoundedRectShape(17.9, 10.6, 0.85), 14);
+  const matBorderMat = new THREE.MeshStandardMaterial({
+    color: 0xe3d2be,
+    roughness: 0.9,
+    metalness: 0.0,
+    polygonOffset: true,
+    polygonOffsetFactor: -0.5,
+    polygonOffsetUnits: -0.5,
+  });
+  const matBorder = new THREE.Mesh(matBorderGeo, matBorderMat);
+  matBorder.rotation.x = -Math.PI / 2;
+  matBorder.position.set(-0.55, 0.006, -2.9);
+  matBorder.receiveShadow = true;
+  sceneGroup.add(matBorder);
+
+  const centralMatGeo = new THREE.ShapeGeometry(createRoundedRectShape(17.5, 10.2, 0.72), 14);
+  const centralMatTex = createCentralBeigeMatTexture();
+  const centralMatMaterial = new THREE.MeshStandardMaterial({
+    map: centralMatTex,
+    roughness: 0.92,
+    metalness: 0.0,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const centralMatMesh = new THREE.Mesh(centralMatGeo, centralMatMaterial);
+  centralMatMesh.rotation.x = -Math.PI / 2;
+  centralMatMesh.position.set(-0.55, 0.01, -2.9);
+  centralMatMesh.receiveShadow = true;
+  sceneGroup.add(centralMatMesh);
+
+  // ========================================================
+  // 2. Boundary Walls (Warm Cream Ivory + Light-Wood Wainscoting)
+  // ========================================================
+  // Back Wall (Z = -9.2)
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(22, 5.5, 0.4), creamWallMat);
   backWall.position.set(0, 2.75, -9.2);
   backWall.receiveShadow = true;
   sceneGroup.add(backWall);
 
-  // Left Wall (X = -11)
-  const leftWallGeo = new THREE.BoxGeometry(0.4, 5.5, 18);
-  const leftWall = new THREE.Mesh(leftWallGeo, wallMat);
+  // Left Wall (X = -11.2)
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.5, 18), creamWallMat);
   leftWall.position.set(-11.2, 2.75, 0);
   leftWall.receiveShadow = true;
   sceneGroup.add(leftWall);
 
-  // Baseboards
-  const bb1Geo = new THREE.BoxGeometry(22, 0.25, 0.1);
-  const bb1 = new THREE.Mesh(bb1Geo, baseboardMat);
-  bb1.position.set(0, 0.125, -8.95);
+  // Light-Wood Wainscoting along Back Wall & Left Wall
+  const backWainscotMat = new THREE.MeshStandardMaterial({
+    map: createWainscotingTexture(11),
+    roughness: 0.74,
+    metalness: 0.0,
+  });
+  const backWainscot = new THREE.Mesh(new THREE.BoxGeometry(21.95, 1.28, 0.06), backWainscotMat);
+  backWainscot.position.set(0, 0.64, -8.97);
+  backWainscot.receiveShadow = true;
+  sceneGroup.add(backWainscot);
+
+  const leftWainscotMat = new THREE.MeshStandardMaterial({
+    map: createWainscotingTexture(9),
+    roughness: 0.74,
+    metalness: 0.0,
+  });
+  const leftWainscot = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.28, 17.95), leftWainscotMat);
+  leftWainscot.position.set(-10.97, 0.64, 0);
+  leftWainscot.receiveShadow = true;
+  sceneGroup.add(leftWainscot);
+
+  // Warm Oak Chair Rails (top molding of wainscoting) & Baseboards
+  const backChairRail = new THREE.Mesh(
+    createRoundedSlabGeometry(22, 0.08, 0.13, 0.03, 0.015),
+    mediumOakMat
+  );
+  backChairRail.position.set(0, 1.3, -8.94);
+  backChairRail.castShadow = true;
+  sceneGroup.add(backChairRail);
+
+  const leftChairRail = new THREE.Mesh(
+    createRoundedSlabGeometry(0.13, 0.08, 18, 0.03, 0.015),
+    mediumOakMat
+  );
+  leftChairRail.position.set(-10.94, 1.3, 0);
+  leftChairRail.castShadow = true;
+  sceneGroup.add(leftChairRail);
+
+  const bb1 = new THREE.Mesh(new THREE.BoxGeometry(22, 0.18, 0.1), mediumOakMat);
+  bb1.position.set(0, 0.09, -8.94);
   sceneGroup.add(bb1);
 
-  const bb2Geo = new THREE.BoxGeometry(0.1, 0.25, 18);
-  const bb2 = new THREE.Mesh(bb2Geo, baseboardMat);
-  bb2.position.set(-10.95, 0.125, 0);
+  const bb2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 18), mediumOakMat);
+  bb2.position.set(-10.94, 0.09, 0);
   sceneGroup.add(bb2);
 
+  // Cozy Pastel Low Partitions (strictly tucked at wall edges/corners, clear of all paths)
+  const mintPartition = createPastelPartition(2.1, 1.15, 0xb8dec9, lightOakMat); // Soft Mint
+  mintPartition.position.set(-3.2, 0, -8.72);
+  sceneGroup.add(mintPartition);
+
+  const lavenderPartition = createPastelPartition(2.1, 1.15, 0xd7cceb, lightOakMat); // Soft Lavender
+  lavenderPartition.position.set(2.9, 0, -8.72);
+  sceneGroup.add(lavenderPartition);
+
+  const peachPartition = createPastelPartition(2.3, 1.12, 0xf5cbb6, lightOakMat); // Soft Peach
+  peachPartition.rotation.y = Math.PI / 2;
+  peachPartition.position.set(-10.62, 0, 4.9);
+  sceneGroup.add(peachPartition);
+
+  const butterPartition = createPastelPartition(2.1, 1.12, 0xf6e2a4, lightOakMat); // Butter Yellow
+  butterPartition.rotation.y = Math.PI / 2;
+  butterPartition.position.set(-10.62, 0, 2.2);
+  sceneGroup.add(butterPartition);
+
+  const cornerMintPartition = createPastelPartition(1.9, 1.12, 0xc3e4d0, lightOakMat);
+  cornerMintPartition.rotation.y = -Math.PI / 5;
+  cornerMintPartition.position.set(9.2, 0, -6.4);
+  sceneGroup.add(cornerMintPartition);
+
+  // Miniature Clay Potted Plants tucked into non-walkable corners
+  const plantBackLeft = createClayPottedPlant();
+  plantBackLeft.position.set(-9.9, 0, -7.9);
+  sceneGroup.add(plantBackLeft);
+
+  const plantBackRight = createClayPottedPlant();
+  plantBackRight.position.set(9.7, 0, -7.8);
+  plantBackRight.scale.setScalar(1.08);
+  sceneGroup.add(plantBackRight);
+
+  const plantFrontLeft = createClayPottedPlant();
+  plantFrontLeft.position.set(-9.8, 0, 7.6);
+  plantFrontLeft.scale.setScalar(0.95);
+  sceneGroup.add(plantFrontLeft);
+
+  // ========================================================
   // 3. Overhead Grand Banner with Dynamic Title
+  // ========================================================
   const bannerCanvas = document.createElement('canvas');
   bannerCanvas.width = 1200;
   bannerCanvas.height = 240;
@@ -345,81 +729,127 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   const bannerTexture = new THREE.CanvasTexture(bannerCanvas);
   bannerTexture.colorSpace = THREE.SRGBColorSpace;
 
-  const updateBannerTitle = (titleText: string, subText = '서울특별시 가상 제1투표구  |  소중한 한 표, 현명한 선택!') => {
-    bannerCtx.fillStyle = '#ffffff';
+  const updateBannerTitle = (
+    titleText: string,
+    subText = '서울특별시 가상 제1투표구  |  소중한 한 표, 현명한 선택!'
+  ) => {
+    // Warm cream diorama banner surface
+    bannerCtx.fillStyle = '#FFFBF4';
     bannerCtx.fillRect(0, 0, 1200, 240);
 
-    bannerCtx.fillStyle = '#0284c7';
+    // Soft pastel sky & sage ribbon stripes
+    bannerCtx.fillStyle = '#7EB8F0';
     bannerCtx.fillRect(0, 0, 1200, 16);
-    bannerCtx.fillStyle = '#16a34a';
+    bannerCtx.fillStyle = '#6BC287';
     bannerCtx.fillRect(0, 224, 1200, 16);
 
-    // Official Election Emblem Mark
-    bannerCtx.fillStyle = '#0284c7';
+    // Official Election Emblem Mark (Warm sage badge)
+    bannerCtx.fillStyle = '#5DAE74';
     bannerCtx.beginPath();
-    bannerCtx.arc(80, 120, 42, 0, Math.PI * 2);
+    bannerCtx.arc(82, 120, 44, 0, Math.PI * 2);
     bannerCtx.fill();
 
-    bannerCtx.fillStyle = '#ffffff';
-    bannerCtx.font = 'bold 36px sans-serif';
+    bannerCtx.strokeStyle = '#FFFBF4';
+    bannerCtx.lineWidth = 4;
+    bannerCtx.beginPath();
+    bannerCtx.arc(82, 120, 36, 0, Math.PI * 2);
+    bannerCtx.stroke();
+
+    bannerCtx.fillStyle = '#FFFFFF';
+    bannerCtx.font = 'bold 34px "Pretendard", "Noto Sans KR", sans-serif';
     bannerCtx.textAlign = 'center';
     bannerCtx.textBaseline = 'middle';
-    bannerCtx.fillText('선거', 80, 120);
+    bannerCtx.fillText('선거', 82, 121);
 
-    // Main Banner Title
+    // Main Banner Title in warm cocoa ink
     bannerCtx.textAlign = 'left';
-    bannerCtx.fillStyle = '#0f172a';
+    bannerCtx.fillStyle = '#362820';
     const fontSize = titleText.length > 22 ? 38 : 48;
     bannerCtx.font = `bold ${fontSize}px "Pretendard", "Noto Sans KR", sans-serif`;
-    bannerCtx.fillText(titleText, 150, 95);
+    bannerCtx.fillText(titleText, 152, 95);
 
-    bannerCtx.fillStyle = '#475569';
-    bannerCtx.font = '500 26px "Pretendard", "Noto Sans KR", sans-serif';
-    bannerCtx.fillText(subText, 150, 155);
+    bannerCtx.fillStyle = '#7A685C';
+    bannerCtx.font = '600 26px "Pretendard", "Noto Sans KR", sans-serif';
+    bannerCtx.fillText(subText, 152, 155);
 
-    // Right side stamp mark
-    bannerCtx.strokeStyle = '#dc2626';
+    // Right side warm coral-red stamp seal
+    bannerCtx.strokeStyle = '#DC5A5A';
     bannerCtx.lineWidth = 4;
-    bannerCtx.strokeRect(1020, 50, 130, 130);
-    bannerCtx.fillStyle = '#dc2626';
-    bannerCtx.font = 'bold 24px sans-serif';
+    bannerCtx.beginPath();
+    bannerCtx.roundRect(1020, 50, 132, 132, 16);
+    bannerCtx.stroke();
+
+    bannerCtx.fillStyle = '#DC5A5A';
+    bannerCtx.font = 'bold 24px "Pretendard", sans-serif';
     bannerCtx.textAlign = 'center';
-    bannerCtx.fillText('모의선거', 1085, 100);
-    bannerCtx.fillText('관리위원회', 1085, 135);
+    bannerCtx.fillText('모의선거', 1086, 100);
+    bannerCtx.fillText('관리위원회', 1086, 136);
 
     bannerTexture.needsUpdate = true;
   };
 
   updateBannerTitle('제1회 오늘 점심 메뉴 모의투표');
 
-  const bannerGeo = new THREE.PlaneGeometry(10, 2.0);
-  const bannerMat = new THREE.MeshStandardMaterial({
-    map: bannerTexture,
-    roughness: 0.4,
-  });
-  const bannerMesh = new THREE.Mesh(bannerGeo, bannerMat);
+  // Slim warm oak backing frame behind banner
+  const bannerBackFrame = new THREE.Mesh(
+    createRoundedPanelGeometry(10.22, 2.22, 0.08, 0.14, 0.025),
+    lightOakMat
+  );
+  bannerBackFrame.position.set(0, 4.0, -8.95);
+  bannerBackFrame.castShadow = true;
+  sceneGroup.add(bannerBackFrame);
+
+  const bannerMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(10, 2.0),
+    new THREE.MeshStandardMaterial({
+      map: bannerTexture,
+      roughness: 0.72,
+      metalness: 0.0,
+    })
+  );
   bannerMesh.position.set(0, 4.0, -8.9);
   sceneGroup.add(bannerMesh);
 
-  // Korean Flag on back wall
+  // Korean Flag on back wall (Exact National Flag Act texture + subtle warm oak backing frame)
+  const flagBackFrame = new THREE.Mesh(
+    createRoundedPanelGeometry(2.58, 1.78, 0.07, 0.08, 0.02),
+    mediumOakMat
+  );
+  flagBackFrame.position.set(-8.0, 3.8, -8.94);
+  flagBackFrame.castShadow = true;
+  sceneGroup.add(flagBackFrame);
+
   const flagGeo = new THREE.PlaneGeometry(2.4, 1.6);
   const flagMat = new THREE.MeshStandardMaterial({
     map: createKoreanFlagTexture(),
-    roughness: 0.5,
+    roughness: 0.62,
+    metalness: 0.0,
   });
   const flagMesh = new THREE.Mesh(flagGeo, flagMat);
   flagMesh.position.set(-8.0, 3.8, -8.9);
   sceneGroup.add(flagMesh);
 
-  // 4. Floor Directional Markers and Walking Path Guidance
+  // ========================================================
+  // 4. Floor Directional Guidance Strip (Warm Cream & Sage)
+  // ========================================================
   const pathCanvas = document.createElement('canvas');
   pathCanvas.width = 1024;
   pathCanvas.height = 256;
   const pctx = pathCanvas.getContext('2d')!;
-  pctx.fillStyle = '#0284c7';
-  pctx.fillRect(0, 0, 1024, 256);
-  pctx.fillStyle = '#ffffff';
-  pctx.font = 'bold 42px "Pretendard", sans-serif';
+  pctx.clearRect(0, 0, 1024, 256);
+
+  // Warm cream pill with soft sage border
+  pctx.fillStyle = 'rgba(255, 250, 242, 0.94)';
+  pctx.beginPath();
+  pctx.roundRect(14, 26, 996, 204, 102);
+  pctx.fill();
+
+  pctx.strokeStyle = '#6DB884';
+  pctx.lineWidth = 10;
+  pctx.stroke();
+
+  pctx.fillStyle = '#3E7A51';
+  pctx.font = 'bold 38px "Pretendard", "Noto Sans KR", sans-serif';
   pctx.textAlign = 'center';
   pctx.textBaseline = 'middle';
   pctx.fillText('투표 진행 방향  ▶  본인확인  ▶  기표소  ▶  투표함  ▶  개표 전광판', 512, 128);
@@ -429,7 +859,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   const pathMat = new THREE.MeshBasicMaterial({
     map: pathTexture,
     transparent: true,
-    opacity: 0.85,
+    opacity: 0.92,
     polygonOffset: true,
     polygonOffsetFactor: -1,
     polygonOffsetUnits: -1,
@@ -441,110 +871,177 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
 
   // ========================================================
   // ZONE 1: Verification Desk (신분확인·투표용지 교부대)
-  // Located at X = -6.5, Z = -4.5
+  // Located at X = -6.5, Z = -4.5 (Exact coordinates preserved)
   // ========================================================
   const deskZoneGroup = new THREE.Group();
   deskZoneGroup.position.set(-6.5, 0, -4.5);
 
-  // Main Desk Table
-  const tableTopGeo = new THREE.BoxGeometry(4.2, 0.12, 1.4);
-  const tableTop = new THREE.Mesh(tableTopGeo, deskTopMat);
-  tableTop.position.set(0, 0.88, 0);
+  // Rounded Light-Oak Tabletop
+  const tableTop = new THREE.Mesh(
+    createRoundedSlabGeometry(4.24, 0.13, 1.44, 0.18, 0.03),
+    lightOakMat
+  );
+  tableTop.position.set(0, 0.84, 0);
   tableTop.castShadow = true;
   tableTop.receiveShadow = true;
   deskZoneGroup.add(tableTop);
 
-  // Desk modesty panel & legs
-  const deskPanelGeo = new THREE.BoxGeometry(4.0, 0.76, 0.08);
-  const deskPanelMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 });
-  const deskPanel = new THREE.Mesh(deskPanelGeo, deskPanelMat);
-  deskPanel.position.set(0, 0.44, 0.55);
+  // Warm Cream Modesty Panel + Pastel Mint Ribbon Accent
+  const deskPanel = new THREE.Mesh(
+    createRoundedPanelGeometry(3.86, 0.72, 0.09, 0.08, 0.02),
+    warmCreamMat
+  );
+  deskPanel.position.set(0, 0.42, 0.54);
   deskPanel.castShadow = true;
+  deskPanel.receiveShadow = true;
   deskZoneGroup.add(deskPanel);
 
-  // Table Legs
+  const deskAccentBand = new THREE.Mesh(
+    createRoundedPanelGeometry(3.54, 0.18, 0.04, 0.06, 0.01),
+    pastelMintMat
+  );
+  deskAccentBand.position.set(0, 0.54, 0.59);
+  deskZoneGroup.add(deskAccentBand);
+
+  // 4 Tapered Round Wooden Legs
+  const deskLegGeo = new THREE.CylinderGeometry(0.055, 0.04, 0.8, 14);
   const legPositions = [
-    [-1.9, 0.44, -0.55],
-    [1.9, 0.44, -0.55],
-    [-1.9, 0.44, 0.55],
-    [1.9, 0.44, 0.55],
+    [-1.88, 0.4, -0.52],
+    [1.88, 0.4, -0.52],
+    [-1.88, 0.4, 0.52],
+    [1.88, 0.4, 0.52],
   ];
   legPositions.forEach(([x, y, z]) => {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.88), aluminumMat);
+    const leg = new THREE.Mesh(deskLegGeo, mediumOakMat);
     leg.position.set(x, y, z);
     leg.castShadow = true;
     deskZoneGroup.add(leg);
   });
 
-  // Desk Signage Board
-  const deskSignGeo = new THREE.BoxGeometry(1.4, 0.4, 0.06);
-  const deskSignTex = createSignTexture('1. 본인 확인 및 투표용지 교부대', '신분증 및 전자 서명');
-  const deskSignMat = new THREE.MeshStandardMaterial({ map: deskSignTex });
-  const deskSign = new THREE.Mesh(deskSignGeo, deskSignMat);
-  deskSign.position.set(0, 1.25, 0.6);
-  deskSign.rotation.x = -0.15;
-  deskZoneGroup.add(deskSign);
-
-  // Acrylic Privacy Partition on Desk
-  const partitionGeo = new THREE.BoxGeometry(3.6, 0.6, 0.02);
+  // Low Clear Rounded Acrylic Guard (keeps clay NPC face at y~1.29 unobstructed!)
   const partitionMat = new THREE.MeshStandardMaterial({
-    color: 0xbae6fd,
+    color: 0xdff2fa,
     transparent: true,
-    opacity: 0.4,
-    roughness: 0.1,
+    opacity: 0.28,
+    roughness: 0.15,
+    metalness: 0.05,
   });
-  const partition = new THREE.Mesh(partitionGeo, partitionMat);
-  partition.position.set(0, 1.2, 0.2);
+  const partition = new THREE.Mesh(
+    createRoundedPanelGeometry(3.3, 0.34, 0.025, 0.08, 0.008),
+    partitionMat
+  );
+  partition.position.set(0, 1.08, 0.22);
   deskZoneGroup.add(partition);
 
-  // Laptop on Desk
-  const laptopBase = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.02, 0.28), aluminumMat);
-  laptopBase.position.set(-0.6, 0.95, -0.05);
+  // Cute wooden acrylic stand feet
+  [-1.3, 1.3].forEach((px) => {
+    const standFoot = new THREE.Mesh(
+      createRoundedSlabGeometry(0.14, 0.05, 0.16, 0.03, 0.01),
+      mediumOakMat
+    );
+    standFoot.position.set(px, 0.92, 0.22);
+    deskZoneGroup.add(standFoot);
+  });
+
+  // Desk Signage Board (Offset slightly to the right so it never hides NPC's cute face)
+  const deskSignTex = createSignTexture('1. 본인 확인 · 투표용지 교부', '신분증 확인 및 서명', '#6EAEE8');
+  const deskSignBack = new THREE.Mesh(
+    createRoundedPanelGeometry(1.38, 0.44, 0.06, 0.07, 0.015),
+    lightOakMat
+  );
+  deskSignBack.position.set(1.22, 1.12, 0.54);
+  deskSignBack.rotation.x = -0.14;
+  deskSignBack.castShadow = true;
+  deskZoneGroup.add(deskSignBack);
+
+  const deskSignFace = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.28, 0.36),
+    new THREE.MeshStandardMaterial({ map: deskSignTex, roughness: 0.65 })
+  );
+  deskSignFace.position.set(1.22, 1.12, 0.576);
+  deskSignFace.rotation.x = -0.14;
+  deskZoneGroup.add(deskSignFace);
+
+  // Rounded Clay Miniature Laptop on Desk
+  const laptopBase = new THREE.Mesh(
+    createRoundedSlabGeometry(0.42, 0.03, 0.28, 0.04, 0.008),
+    softSandFrameMat
+  );
+  laptopBase.position.set(-0.78, 0.92, -0.05);
+  laptopBase.castShadow = true;
   deskZoneGroup.add(laptopBase);
 
-  const laptopScreen = new THREE.Mesh(
-    new THREE.BoxGeometry(0.4, 0.26, 0.02),
-    new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.2 })
+  const laptopScreenBack = new THREE.Mesh(
+    createRoundedPanelGeometry(0.42, 0.27, 0.03, 0.04, 0.008),
+    softSandFrameMat
   );
-  laptopScreen.position.set(-0.6, 1.08, -0.18);
-  laptopScreen.rotation.x = 0.2;
-  deskZoneGroup.add(laptopScreen);
+  laptopScreenBack.position.set(-0.78, 1.05, -0.18);
+  laptopScreenBack.rotation.x = 0.2;
+  laptopScreenBack.castShadow = true;
+  deskZoneGroup.add(laptopScreenBack);
 
-  // Ballot Paper Stack Tray
-  const paperStack = new THREE.Mesh(
-    new THREE.BoxGeometry(0.3, 0.08, 0.4),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })
+  const laptopScreenFace = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.35, 0.21),
+    new THREE.MeshStandardMaterial({ color: 0x86c5f4, roughness: 0.35 })
   );
-  paperStack.position.set(0.6, 0.98, -0.05);
+  laptopScreenFace.position.set(-0.78, 1.05, -0.16);
+  laptopScreenFace.rotation.x = 0.2;
+  deskZoneGroup.add(laptopScreenFace);
+
+  // Ballot Paper Stack Tray (Warm peach tray + crisp paper stack)
+  const paperTray = new THREE.Mesh(
+    createRoundedSlabGeometry(0.36, 0.04, 0.46, 0.05, 0.01),
+    new THREE.MeshStandardMaterial({ color: 0xf4c4ae, roughness: 0.8 })
+  );
+  paperTray.position.set(0.55, 0.92, -0.05);
+  deskZoneGroup.add(paperTray);
+
+  const paperStack = new THREE.Mesh(
+    createRoundedSlabGeometry(0.28, 0.07, 0.38, 0.03, 0.008),
+    new THREE.MeshStandardMaterial({ color: 0xfffdf9, roughness: 0.78 })
+  );
+  paperStack.position.set(0.55, 0.97, -0.05);
+  paperStack.castShadow = true;
   deskZoneGroup.add(paperStack);
 
-  // Stamp Pad
+  // Cute Rounded Coral Stamp Pad
   const stampPad = new THREE.Mesh(
-    new THREE.BoxGeometry(0.18, 0.03, 0.14),
-    new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.3 })
+    createRoundedSlabGeometry(0.18, 0.04, 0.14, 0.04, 0.01),
+    coralAccentMat
   );
-  stampPad.position.set(0.15, 0.95, 0.1);
+  stampPad.position.set(0.1, 0.92, 0.08);
   deskZoneGroup.add(stampPad);
 
   sceneGroup.add(deskZoneGroup);
 
   // ========================================================
   // ZONE 2: Voting Booths (기표소 x 2)
-  // Located at X = 0, Z = -5.0
+  // Located at X = 0, Z = -5.0 (Exact coordinates preserved)
+  // Warm cream frame + pleated beige vertical-cylinder curtains
   // ========================================================
   const boothZoneGroup = new THREE.Group();
   boothZoneGroup.position.set(0, 0, -5.0);
 
-  // Create two side-by-side authentic Korean voting booths
+  const curtainMatA = new THREE.MeshStandardMaterial({
+    color: 0xe7d7c2, // Warm oatmeal beige
+    roughness: 0.94,
+    metalness: 0.0,
+  });
+  const curtainMatB = new THREE.MeshStandardMaterial({
+    color: 0xddcab2, // Slightly deeper warm beige fold
+    roughness: 0.95,
+    metalness: 0.0,
+  });
+
   const createSingleBooth = (offsetX: number) => {
     const singleBooth = new THREE.Group();
     singleBooth.position.x = offsetX;
 
-    // Booth frame (lightweight aluminum poles)
-    const poleMat = aluminumMat;
-    const poleGeo = new THREE.CylinderGeometry(0.03, 0.03, 2.2);
+    // 4 Rounded Warm Cream Frame Posts + Wooden Feet + Rounded Corner Joint Balls
+    const poleGeo = new THREE.CylinderGeometry(0.038, 0.038, 2.2, 14);
+    const jointGeo = new THREE.SphereGeometry(0.048, 12, 10);
+    const footGeo = new THREE.CylinderGeometry(0.055, 0.06, 0.06, 12);
 
-    // 4 vertical frame legs
     const corners = [
       [-0.7, 1.1, -0.5],
       [0.7, 1.1, -0.5],
@@ -552,74 +1049,133 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
       [0.7, 1.1, 0.5],
     ];
     corners.forEach(([x, y, z]) => {
-      const pole = new THREE.Mesh(poleGeo, poleMat);
+      const pole = new THREE.Mesh(poleGeo, softSandFrameMat);
       pole.position.set(x, y, z);
       pole.castShadow = true;
       singleBooth.add(pole);
+
+      const topJoint = new THREE.Mesh(jointGeo, lightOakMat);
+      topJoint.position.set(x, 2.2, z);
+      singleBooth.add(topJoint);
+
+      const foot = new THREE.Mesh(footGeo, mediumOakMat);
+      foot.position.set(x, 0.03, z);
+      singleBooth.add(foot);
     });
 
-    // Top crossbars
-    const barX = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.04, 0.04), poleMat);
-    barX.position.set(0, 2.2, -0.5);
-    singleBooth.add(barX);
+    // Rounded Top Crossbars (Cylindrical tubes for clay softness)
+    const backBar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.032, 0.032, 1.4, 12),
+      softSandFrameMat
+    );
+    backBar.rotation.z = Math.PI / 2;
+    backBar.position.set(0, 2.2, -0.5);
+    singleBooth.add(backBar);
 
-    const barZ1 = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 1.0), poleMat);
-    barZ1.position.set(-0.7, 2.2, 0);
-    singleBooth.add(barZ1);
+    const frontRod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.026, 0.026, 1.4, 12),
+      mediumOakMat
+    );
+    frontRod.rotation.z = Math.PI / 2;
+    frontRod.position.set(0, 2.13, 0.48);
+    singleBooth.add(frontRod);
 
-    const barZ2 = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 1.0), poleMat);
-    barZ2.position.set(0.7, 2.2, 0);
-    singleBooth.add(barZ2);
+    [-0.7, 0.7].forEach((sx) => {
+      const sideBar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.032, 0.032, 1.0, 12),
+        softSandFrameMat
+      );
+      sideBar.rotation.x = Math.PI / 2;
+      sideBar.position.set(sx, 2.2, 0);
+      singleBooth.add(sideBar);
+    });
 
-    // Left and Right Privacy Side Walls (white matte composite panel)
-    const sideWallGeo = new THREE.BoxGeometry(0.03, 1.6, 1.0);
-    const sideWallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
-
-    const leftWallMesh = new THREE.Mesh(sideWallGeo, sideWallMat);
-    leftWallMesh.position.set(-0.7, 1.2, 0);
+    // Matte Warm Cream Privacy Side & Back Panels
+    const sideWallGeo = createRoundedPanelGeometry(0.94, 1.56, 0.045, 0.07, 0.012);
+    const leftWallMesh = new THREE.Mesh(sideWallGeo, warmCreamMat);
+    leftWallMesh.rotation.y = Math.PI / 2;
+    leftWallMesh.position.set(-0.7, 1.24, 0);
+    leftWallMesh.castShadow = true;
+    leftWallMesh.receiveShadow = true;
     singleBooth.add(leftWallMesh);
 
-    const rightWallMesh = new THREE.Mesh(sideWallGeo, sideWallMat);
-    rightWallMesh.position.set(0.7, 1.2, 0);
+    const rightWallMesh = new THREE.Mesh(sideWallGeo, warmCreamMat);
+    rightWallMesh.rotation.y = Math.PI / 2;
+    rightWallMesh.position.set(0.7, 1.24, 0);
+    rightWallMesh.castShadow = true;
+    rightWallMesh.receiveShadow = true;
     singleBooth.add(rightWallMesh);
 
-    // Back Panel
-    const backWallMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 0.03), sideWallMat);
-    backWallMesh.position.set(0, 1.2, -0.5);
+    const backWallMesh = new THREE.Mesh(
+      createRoundedPanelGeometry(1.36, 1.56, 0.045, 0.07, 0.012),
+      warmCreamMat
+    );
+    backWallMesh.position.set(0, 1.24, -0.5);
+    backWallMesh.castShadow = true;
+    backWallMesh.receiveShadow = true;
     singleBooth.add(backWallMesh);
 
-    // Inner Shelf Table
-    const shelfGeo = new THREE.BoxGeometry(1.36, 0.05, 0.45);
-    const shelfMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.5 });
-    const shelf = new THREE.Mesh(shelfGeo, shelfMat);
-    shelf.position.set(0, 0.95, -0.22);
+    // Inner Light-Oak Writing Shelf
+    const shelf = new THREE.Mesh(
+      createRoundedSlabGeometry(1.34, 0.06, 0.46, 0.07, 0.015),
+      lightOakMat
+    );
+    shelf.position.set(0, 0.94, -0.22);
     shelf.castShadow = true;
+    shelf.receiveShadow = true;
     singleBooth.add(shelf);
 
-    // Stamp tool holder on shelf
+    // Cute rounded coral stamp holder on shelf
     const stampHolder = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.05, 0.12, 10),
-      new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.3 })
+      new THREE.CylinderGeometry(0.042, 0.052, 0.12, 14),
+      coralAccentMat
     );
     stampHolder.position.set(0.4, 1.02, -0.2);
     singleBooth.add(stampHolder);
 
-    // Top Sign: "기표소"
-    const boothSignTex = createSignTexture('2. 기표소', '비밀투표 보장 (Secret Ballot)', '#16a34a');
-    const boothSignMat = new THREE.MeshStandardMaterial({ map: boothSignTex });
-    const boothSign = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 0.04), boothSignMat);
-    boothSign.position.set(0, 2.38, 0.5);
-    singleBooth.add(boothSign);
+    // Warm Wooden-Framed Top Sign: "2. 기표소"
+    const boothSignTex = createSignTexture('2. 기표소', '비밀투표 보장 (Secret Ballot)', '#5DAE74');
+    const boothSignBack = new THREE.Mesh(
+      createRoundedPanelGeometry(1.26, 0.39, 0.055, 0.07, 0.015),
+      lightOakMat
+    );
+    boothSignBack.position.set(0, 2.38, 0.5);
+    boothSignBack.castShadow = true;
+    singleBooth.add(boothSignBack);
 
-    // Korean Election Booth Privacy Curtain (Deep Navy Blue Fabric)
-    const curtainGeo = new THREE.BoxGeometry(1.38, 1.45, 0.04);
-    const curtainMat = new THREE.MeshStandardMaterial({
-      color: 0x1e3a8a,
-      roughness: 0.9,
-    });
-    const curtain = new THREE.Mesh(curtainGeo, curtainMat);
-    curtain.position.set(0, 1.4, 0.48);
-    singleBooth.add(curtain);
+    const boothSignFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.18, 0.32),
+      new THREE.MeshStandardMaterial({ map: boothSignTex, roughness: 0.65 })
+    );
+    boothSignFace.position.set(0, 2.38, 0.532);
+    singleBooth.add(boothSignFace);
+
+    // Pleated Beige Fabric Curtain (Row of slender vertical cylinders for cozy miniature folds)
+    const pleatCount = 11;
+    const curtainSpan = 1.22;
+    const pleatGeo = new THREE.CylinderGeometry(0.058, 0.064, 1.44, 12);
+    const ringGeo = new THREE.TorusGeometry(0.036, 0.01, 8, 12);
+
+    for (let i = 0; i < pleatCount; i++) {
+      const t = i / (pleatCount - 1);
+      const px = -curtainSpan / 2 + t * curtainSpan;
+      // Gentle cloth ripple along Z
+      const waveZ = Math.sin(i * 1.45) * 0.022;
+      const pleat = new THREE.Mesh(pleatGeo, i % 2 === 0 ? curtainMatA : curtainMatB);
+      pleat.position.set(px, 1.38, 0.48 + waveZ);
+      pleat.scale.set(1.08, 1.0, 0.72);
+      pleat.castShadow = true;
+      pleat.receiveShadow = true;
+      singleBooth.add(pleat);
+
+      // Cute wooden curtain rings along the top rod
+      if (i % 2 === 0) {
+        const ring = new THREE.Mesh(ringGeo, lightOakMat);
+        ring.rotation.y = Math.PI / 2;
+        ring.position.set(px, 2.13, 0.48);
+        singleBooth.add(ring);
+      }
+    }
 
     return singleBooth;
   };
@@ -633,162 +1189,220 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
 
   // ========================================================
   // ZONE 3: Ballot Box (투표함)
-  // Located at X = 5.5, Z = -4.5
+  // Located at X = 5.5, Z = -4.5 (Exact coordinates preserved)
+  // Friendly Soft Sage Green rounded body + Clean White top slot panel
   // ========================================================
   const boxZoneGroup = new THREE.Group();
   boxZoneGroup.position.set(5.5, 0, -4.5);
 
-  // Stand table for ballot box
+  // Rounded Light-Oak Stand Table
   const boxTableTop = new THREE.Mesh(
-    new THREE.BoxGeometry(1.8, 0.1, 1.4),
-    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6 })
+    createRoundedSlabGeometry(1.86, 0.11, 1.44, 0.16, 0.028),
+    lightOakMat
   );
   boxTableTop.position.set(0, 0.72, 0);
   boxTableTop.castShadow = true;
   boxTableTop.receiveShadow = true;
   boxZoneGroup.add(boxTableTop);
 
+  // Soft cream apron under stand table
+  const boxTableApron = new THREE.Mesh(
+    createRoundedSlabGeometry(1.56, 0.14, 1.14, 0.1, 0.015),
+    warmCreamMat
+  );
+  boxTableApron.position.set(0, 0.61, 0);
+  boxZoneGroup.add(boxTableApron);
+
+  const boxLegGeo = new THREE.CylinderGeometry(0.052, 0.038, 0.7, 14);
   const boxTableLegs = [
-    [-0.75, 0.36, -0.55],
-    [0.75, 0.36, -0.55],
-    [-0.75, 0.36, 0.55],
-    [0.75, 0.36, 0.55],
+    [-0.74, 0.35, -0.52],
+    [0.74, 0.35, -0.52],
+    [-0.74, 0.35, 0.52],
+    [0.74, 0.35, 0.52],
   ];
   boxTableLegs.forEach(([x, y, z]) => {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.72, 0.08), aluminumMat);
+    const leg = new THREE.Mesh(boxLegGeo, mediumOakMat);
     leg.position.set(x, y, z);
     leg.castShadow = true;
     boxZoneGroup.add(leg);
   });
 
-  // Authentic Korean Election Commission Ballot Box Model
-  // White rectangular prism with prominent green frame borders and locks
+  // Ballot Box Group (Positioned at y = 0.77 so top slot aligns with ballot drop endY = 1.50)
   const ballotBoxMesh = new THREE.Group();
   ballotBoxMesh.position.set(0, 0.77, 0);
 
-  // Main white box body
-  const bodyGeo = new THREE.BoxGeometry(0.85, 0.7, 0.65);
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.4,
-    metalness: 0.05,
-  });
-  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-  bodyMesh.position.y = 0.35;
+  // Friendly Soft Sage Green Rounded Body
+  const bodyMesh = new THREE.Mesh(
+    createRoundedSlabGeometry(0.88, 0.68, 0.68, 0.1, 0.035),
+    sageGreenMat
+  );
+  bodyMesh.position.y = 0.34;
   bodyMesh.castShadow = true;
   bodyMesh.receiveShadow = true;
   ballotBoxMesh.add(bodyMesh);
 
-  // Prominent Green Frame Edges (Korean election signature style)
-  const greenFrameMat = new THREE.MeshStandardMaterial({
-    color: 0x15803d, // vivid forest green
-    roughness: 0.3,
-    metalness: 0.1,
-  });
+  // Subtle decorative cream base trim collar
+  const baseCollar = new THREE.Mesh(
+    createRoundedSlabGeometry(0.91, 0.07, 0.71, 0.1, 0.02),
+    warmCreamMat
+  );
+  baseCollar.position.y = 0.035;
+  ballotBoxMesh.add(baseCollar);
 
-  // Green lid on top
-  const lidGeo = new THREE.BoxGeometry(0.89, 0.08, 0.69);
-  const lid = new THREE.Mesh(lidGeo, greenFrameMat);
-  lid.position.y = 0.72;
+  // Clean White/Ivory Rounded Top Slot Panel
+  const topPanelMat = new THREE.MeshStandardMaterial({
+    color: 0xfbf8f3,
+    roughness: 0.72,
+    metalness: 0.0,
+  });
+  const lid = new THREE.Mesh(
+    createRoundedSlabGeometry(0.92, 0.1, 0.72, 0.1, 0.028),
+    topPanelMat
+  );
+  lid.position.y = 0.71;
   lid.castShadow = true;
+  lid.receiveShadow = true;
   ballotBoxMesh.add(lid);
 
-  // Green corner posts
-  const postGeo = new THREE.BoxGeometry(0.06, 0.7, 0.06);
-  const postCoords = [
-    [-0.41, 0.35, -0.31],
-    [0.41, 0.35, -0.31],
-    [-0.41, 0.35, 0.31],
-    [0.41, 0.35, 0.31],
-  ];
-  postCoords.forEach(([x, y, z]) => {
-    const post = new THREE.Mesh(postGeo, greenFrameMat);
-    post.position.set(x, y, z);
-    ballotBoxMesh.add(post);
-  });
+  // Recessed Slot Surround + Dark Slot Opening (Top surface at local y ≈ 0.76 -> world y ≈ 1.53)
+  const slotBezel = new THREE.Mesh(
+    createRoundedSlabGeometry(0.46, 0.024, 0.11, 0.035, 0.008),
+    new THREE.MeshStandardMaterial({ color: 0xdfe9e1, roughness: 0.75 })
+  );
+  slotBezel.position.set(0, 0.76, 0);
+  ballotBoxMesh.add(slotBezel);
 
-  // Ballot Slot on Top Lid
-  const slotGeo = new THREE.BoxGeometry(0.38, 0.02, 0.04);
-  const slotMat = new THREE.MeshBasicMaterial({ color: 0x052e16 });
-  const slot = new THREE.Mesh(slotGeo, slotMat);
-  slot.position.set(0, 0.765, 0);
+  const slot = new THREE.Mesh(
+    new THREE.BoxGeometry(0.38, 0.018, 0.042),
+    new THREE.MeshBasicMaterial({ color: 0x1e3326 })
+  );
+  slot.position.set(0, 0.768, 0);
   ballotBoxMesh.add(slot);
 
-  // Red Security Seals ("특수 봉인 스티커") on locks
-  const sealGeo = new THREE.BoxGeometry(0.12, 0.08, 0.02);
-  const sealMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.4 });
-
-  const sealLeft = new THREE.Mesh(sealGeo, sealMat);
-  sealLeft.position.set(-0.25, 0.68, 0.33);
+  // Cute Rounded Coral-Red Security Seals ("특수 봉인 스티커")
+  const sealGeo = createRoundedPanelGeometry(0.13, 0.09, 0.025, 0.025, 0.008);
+  const sealLeft = new THREE.Mesh(sealGeo, coralAccentMat);
+  sealLeft.position.set(-0.26, 0.67, 0.345);
   ballotBoxMesh.add(sealLeft);
 
-  const sealRight = new THREE.Mesh(sealGeo, sealMat);
-  sealRight.position.set(0.25, 0.68, 0.33);
+  const sealRight = new THREE.Mesh(sealGeo, coralAccentMat);
+  sealRight.position.set(0.26, 0.67, 0.345);
   ballotBoxMesh.add(sealRight);
 
-  // Front official title decal "투표함"
+  // Front Rounded Cream Nameplate ("투 표 함 / BALLOT BOX")
   const ballotCanvas = document.createElement('canvas');
   ballotCanvas.width = 512;
   ballotCanvas.height = 256;
   const bctx = ballotCanvas.getContext('2d')!;
-  bctx.fillStyle = '#ffffff';
-  bctx.fillRect(0, 0, 512, 256);
-  bctx.fillStyle = '#15803d';
-  bctx.font = 'bold 72px "Pretendard", sans-serif';
+  bctx.fillStyle = '#FFFDF9';
+  bctx.beginPath();
+  bctx.roundRect(8, 8, 496, 240, 32);
+  bctx.fill();
+  bctx.strokeStyle = '#9CD1AA';
+  bctx.lineWidth = 10;
+  bctx.stroke();
+
+  bctx.fillStyle = '#3B7D50';
+  bctx.font = 'bold 72px "Pretendard", "Noto Sans KR", sans-serif';
   bctx.textAlign = 'center';
   bctx.textBaseline = 'middle';
-  bctx.fillText('투  표  함', 256, 100);
-  bctx.fillStyle = '#64748b';
-  bctx.font = '600 32px sans-serif';
-  bctx.fillText('BALLOT BOX', 256, 175);
+  bctx.fillText('투  표  함', 256, 102);
+
+  bctx.fillStyle = '#7E6E62';
+  bctx.font = '700 30px "Pretendard", sans-serif';
+  bctx.fillText('BALLOT BOX', 256, 178);
 
   const ballotTex = new THREE.CanvasTexture(ballotCanvas);
   ballotTex.colorSpace = THREE.SRGBColorSpace;
-  const ballotDecalMat = new THREE.MeshBasicMaterial({
-    map: ballotTex,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
-  const ballotDecal = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.28), ballotDecalMat);
-  ballotDecal.position.set(0, 0.35, 0.33);
+  const ballotDecal = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.58, 0.29),
+    new THREE.MeshBasicMaterial({
+      map: ballotTex,
+      transparent: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+  );
+  ballotDecal.position.set(0, 0.34, 0.344);
   ballotBoxMesh.add(ballotDecal);
 
   boxZoneGroup.add(ballotBoxMesh);
 
-  // Top Sign for Ballot Box
-  const boxSignTex = createSignTexture('3. 투표함', '접은 투표용지를 투입구에 넣어주세요', '#15803d');
-  const boxSignMat = new THREE.MeshStandardMaterial({ map: boxSignTex });
-  const boxSign = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.4, 0.05), boxSignMat);
-  boxSign.position.set(0, 1.85, 0);
-  boxZoneGroup.add(boxSign);
+  // Warm Oak-Framed Top Sign for Ballot Box (Mounted cleanly above box)
+  const boxSignTex = createSignTexture('3. 투표함', '접은 투표용지를 투입구에 넣어주세요', '#5DAE74');
+  const boxSignBack = new THREE.Mesh(
+    createRoundedPanelGeometry(1.46, 0.44, 0.06, 0.07, 0.015),
+    lightOakMat
+  );
+  boxSignBack.position.set(0, 1.9, -0.32);
+  boxSignBack.castShadow = true;
+  boxZoneGroup.add(boxSignBack);
+
+  const boxSignFace = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.38, 0.36),
+    new THREE.MeshStandardMaterial({ map: boxSignTex, roughness: 0.65 })
+  );
+  boxSignFace.position.set(0, 1.9, -0.285);
+  boxZoneGroup.add(boxSignFace);
+
+  // Slim wooden rear sign posts down to table
+  [-0.5, 0.5].forEach((sx) => {
+    const signPost = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.025, 0.025, 1.15, 10),
+      mediumOakMat
+    );
+    signPost.position.set(sx, 1.28, -0.34);
+    boxZoneGroup.add(signPost);
+  });
 
   sceneGroup.add(boxZoneGroup);
 
   // ========================================================
   // ZONE 4: Results Billboard (개표 전광판) & Exit Door
-  // Located at X = 7.0, Z = 1.5
+  // Located at X = 7.0, Z = 1.5 (Exact coordinates & angle preserved)
+  // Rounded Deep Navy frame + Vivid Pastel Bar Graphs
   // ========================================================
   const billboardGroup = new THREE.Group();
   billboardGroup.position.set(7.0, 0, 1.5);
   billboardGroup.rotation.y = -Math.PI / 4; // Angled toward center aisle
 
-  // Truss pillars for billboard
-  const pillarGeo = new THREE.CylinderGeometry(0.06, 0.06, 3.2);
-  const pillarMat = aluminumMat;
-  const p1 = new THREE.Mesh(pillarGeo, pillarMat);
-  p1.position.set(-1.6, 1.6, 0);
-  billboardGroup.add(p1);
+  // Warm Oak Support Pillars + Rounded Foot Caps
+  const pillarGeo = new THREE.CylinderGeometry(0.065, 0.075, 3.2, 16);
+  const footBaseGeo = new THREE.CylinderGeometry(0.16, 0.18, 0.1, 16);
+  [-1.55, 1.55].forEach((px) => {
+    const pillar = new THREE.Mesh(pillarGeo, mediumOakMat);
+    pillar.position.set(px, 1.6, 0);
+    pillar.castShadow = true;
+    billboardGroup.add(pillar);
 
-  const p2 = new THREE.Mesh(pillarGeo, pillarMat);
-  p2.position.set(1.6, 1.6, 0);
-  billboardGroup.add(p2);
+    const footBase = new THREE.Mesh(footBaseGeo, lightOakMat);
+    footBase.position.set(px, 0.05, 0);
+    footBase.castShadow = true;
+    billboardGroup.add(footBase);
+  });
 
-  // Large High-Tech LED Display Frame
-  const frameGeo = new THREE.BoxGeometry(3.6, 2.2, 0.18);
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.2, metalness: 0.6 });
-  const frame = new THREE.Mesh(frameGeo, frameMat);
-  frame.position.set(0, 2.3, 0);
+  // Outer Warm Honey-Oak Backing Trim
+  const billboardOakTrim = new THREE.Mesh(
+    createRoundedPanelGeometry(3.8, 2.4, 0.16, 0.22, 0.035),
+    lightOakMat
+  );
+  billboardOakTrim.position.set(0, 2.3, -0.04);
+  billboardOakTrim.castShadow = true;
+  billboardGroup.add(billboardOakTrim);
+
+  // Rounded Deep Navy Display Casing
+  const deepNavyFrameMat = new THREE.MeshStandardMaterial({
+    color: 0x1f2a44, // Deep cozy navy
+    roughness: 0.52,
+    metalness: 0.08,
+  });
+  const frame = new THREE.Mesh(
+    createRoundedPanelGeometry(3.66, 2.26, 0.2, 0.18, 0.04),
+    deepNavyFrameMat
+  );
+  frame.position.set(0, 2.3, 0.01);
+  frame.castShadow = true;
   billboardGroup.add(frame);
 
   // Screen Canvas (Dynamic CanvasTexture)
@@ -800,69 +1414,107 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   const boardTexture = new THREE.CanvasTexture(boardCanvas);
   boardTexture.colorSpace = THREE.SRGBColorSpace;
   const boardScreenMat = new THREE.MeshBasicMaterial({ map: boardTexture });
-  const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.0), boardScreenMat);
-  screenMesh.position.set(0, 2.3, 0.1);
+  const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.38, 1.98), boardScreenMat);
+  screenMesh.position.set(0, 2.3, 0.116);
   billboardGroup.add(screenMesh);
 
-  // Billboard Top Header
-  const bbHeaderTex = createSignTexture('4. 개표 현황판', '실시간 투표 결과 집계', '#ea580c');
-  const bbHeader = new THREE.Mesh(
-    new THREE.BoxGeometry(1.6, 0.35, 0.05),
-    new THREE.MeshStandardMaterial({ map: bbHeaderTex })
+  // Billboard Top Header (Warm Apricot/Amber Rounded Plaque)
+  const bbHeaderTex = createSignTexture('4. 개표 현황판', '실시간 투표 결과 집계', '#E68A5C');
+  const bbHeaderBack = new THREE.Mesh(
+    createRoundedPanelGeometry(1.68, 0.4, 0.06, 0.07, 0.015),
+    lightOakMat
   );
-  bbHeader.position.set(0, 3.6, 0);
-  billboardGroup.add(bbHeader);
+  bbHeaderBack.position.set(0, 3.64, 0);
+  bbHeaderBack.castShadow = true;
+  billboardGroup.add(bbHeaderBack);
+
+  const bbHeaderFace = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.58, 0.33),
+    new THREE.MeshStandardMaterial({ map: bbHeaderTex, roughness: 0.65 })
+  );
+  bbHeaderFace.position.set(0, 3.64, 0.036);
+  billboardGroup.add(bbHeaderFace);
 
   sceneGroup.add(billboardGroup);
 
-  // Exit Doorway on Right Wall (Z = 6)
+  // ========================================================
+  // Exit Doorway on Right Side (Exact coordinates preserved: 8.5, 0, 5.5)
+  // Warm Oak Frame + Soft Frosted Glass + Friendly Sage Exit Sign
+  // ========================================================
   const exitDoorGroup = new THREE.Group();
   exitDoorGroup.position.set(8.5, 0, 5.5);
 
   const exitFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(2.4, 3.2, 0.2),
-    new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5 })
+    createRoundedPanelGeometry(2.44, 3.2, 0.22, 0.12, 0.03),
+    lightOakMat
   );
   exitFrame.position.set(0, 1.6, 0);
+  exitFrame.castShadow = true;
   exitDoorGroup.add(exitFrame);
 
-  // Glass doors
+  // Soft Warm Frosted Glass Door
   const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x93c5fd,
+    color: 0xdff1e9,
     transparent: true,
-    opacity: 0.45,
-    roughness: 0.1,
+    opacity: 0.48,
+    roughness: 0.25,
+    metalness: 0.05,
   });
-  const glassDoor = new THREE.Mesh(new THREE.BoxGeometry(2.1, 2.9, 0.04), glassMat);
-  glassDoor.position.set(0, 1.5, 0);
+  const glassDoor = new THREE.Mesh(new THREE.BoxGeometry(2.08, 2.86, 0.05), glassMat);
+  glassDoor.position.set(0, 1.52, 0.02);
   exitDoorGroup.add(glassDoor);
 
-  // Emergency / Exit Sign
+  // Center wooden door mullion + cute rounded wooden handles
+  const doorMullion = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.86, 0.09), mediumOakMat);
+  doorMullion.position.set(0, 1.52, 0.02);
+  exitDoorGroup.add(doorMullion);
+
+  [-0.16, 0.16].forEach((hx) => {
+    const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.026, 0.24, 6, 10), mediumOakMat);
+    handle.position.set(hx, 1.3, 0.09);
+    exitDoorGroup.add(handle);
+  });
+
+  // Friendly Soft Sage Exit Sign
   const exitSignCanvas = document.createElement('canvas');
   exitSignCanvas.width = 512;
   exitSignCanvas.height = 160;
   const ectx = exitSignCanvas.getContext('2d')!;
-  ectx.fillStyle = '#16a34a';
-  ectx.fillRect(0, 0, 512, 160);
-  ectx.fillStyle = '#ffffff';
-  ectx.font = 'bold 58px sans-serif';
+  ectx.fillStyle = '#5DAE74';
+  ectx.beginPath();
+  ectx.roundRect(6, 6, 500, 148, 28);
+  ectx.fill();
+  ectx.strokeStyle = '#FFFBF4';
+  ectx.lineWidth = 8;
+  ectx.stroke();
+
+  ectx.fillStyle = '#FFFFFF';
+  ectx.font = 'bold 54px "Pretendard", sans-serif';
   ectx.textAlign = 'center';
   ectx.textBaseline = 'middle';
-  ectx.fillText('출  구  EXIT  ▶', 256, 80);
+  ectx.fillText('출  구  EXIT  ▶', 256, 82);
 
   const exitSignTex = new THREE.CanvasTexture(exitSignCanvas);
   exitSignTex.colorSpace = THREE.SRGBColorSpace;
-  const exitSignMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1.4, 0.4, 0.06),
-    new THREE.MeshBasicMaterial({ map: exitSignTex })
+
+  const exitSignBack = new THREE.Mesh(
+    createRoundedPanelGeometry(1.48, 0.46, 0.07, 0.08, 0.015),
+    lightOakMat
   );
-  exitSignMesh.position.set(0, 3.4, 0.1);
+  exitSignBack.position.set(0, 3.44, 0.08);
+  exitDoorGroup.add(exitSignBack);
+
+  const exitSignMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.4, 0.39),
+    new THREE.MeshBasicMaterial({ map: exitSignTex, transparent: true })
+  );
+  exitSignMesh.position.set(0, 3.44, 0.12);
   exitDoorGroup.add(exitSignMesh);
 
   sceneGroup.add(exitDoorGroup);
 
   // ========================================================
-  // Dynamic Billboard Canvas Painter
+  // Dynamic Billboard Canvas Painter (Deep Navy + Vivid Pastel Bars)
   // ========================================================
   const updateBillboardTexture = (
     results: { id: string; title: string; votes: number; percent: number }[],
@@ -870,90 +1522,111 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     pollTitle?: string,
     isClosed = false
   ) => {
-    // Dark modern digital dashboard
-    bCtx.fillStyle = '#0f172a';
+    // Deep warm navy display backdrop
+    bCtx.fillStyle = '#1B253E';
     bCtx.fillRect(0, 0, 1024, 640);
 
-    // Grid lines / scanline aesthetic
-    bCtx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
+    // Soft rounded inner frame glow
+    bCtx.strokeStyle = 'rgba(182, 206, 240, 0.18)';
+    bCtx.lineWidth = 4;
+    bCtx.beginPath();
+    bCtx.roundRect(18, 18, 988, 604, 24);
+    bCtx.stroke();
+
+    // Subtle soft dot-grid feel
+    bCtx.strokeStyle = 'rgba(165, 198, 245, 0.06)';
     bCtx.lineWidth = 1;
-    for (let y = 0; y < 640; y += 32) {
+    for (let y = 96; y < 608; y += 44) {
       bCtx.beginPath();
-      bCtx.moveTo(0, y);
-      bCtx.lineTo(1024, y);
+      bCtx.moveTo(44, y);
+      bCtx.lineTo(980, y);
       bCtx.stroke();
     }
 
-    // Header
-    bCtx.fillStyle = '#38bdf8';
-    bCtx.font = 'bold 30px "Pretendard", sans-serif';
-    bCtx.textAlign = 'left';
-    const headerTitle = pollTitle ? `● ${pollTitle}` : '● 실시간 개표 현황 (LIVE TALLY)';
-    bCtx.fillText(headerTitle.length > 26 ? headerTitle.slice(0, 26) + '...' : headerTitle, 48, 56);
+    // Header Title (Warm cream + pastel amber live badge)
+    bCtx.fillStyle = isClosed ? '#7AD3A4' : '#F6C667';
+    bCtx.beginPath();
+    bCtx.arc(58, 56, 10, 0, Math.PI * 2);
+    bCtx.fill();
 
-    bCtx.fillStyle = isClosed ? '#34d399' : '#94a3b8';
-    bCtx.font = '600 22px "Pretendard", sans-serif';
+    bCtx.fillStyle = '#FFF7EB';
+    bCtx.font = 'bold 30px "Pretendard", "Noto Sans KR", sans-serif';
+    bCtx.textAlign = 'left';
+    bCtx.textBaseline = 'middle';
+    const headerTitle = pollTitle ? pollTitle : '실시간 개표 현황 (LIVE TALLY)';
+    bCtx.fillText(headerTitle.length > 24 ? headerTitle.slice(0, 24) + '...' : headerTitle, 80, 56);
+
+    bCtx.fillStyle = isClosed ? '#7AD3A4' : '#C7D6EE';
+    bCtx.font = '600 22px "Pretendard", "Noto Sans KR", sans-serif';
     bCtx.textAlign = 'right';
     const statusLabel = isClosed ? '개표 완료 (100%)' : '실시간 집계 중';
-    bCtx.fillText(`총 투표: ${totalVotes}표 | ${statusLabel}`, 976, 56);
+    bCtx.fillText(`총 투표: ${totalVotes}표  |  ${statusLabel}`, 972, 56);
 
-    // Horizontal divider
-    bCtx.strokeStyle = '#334155';
+    // Warm navy divider
+    bCtx.strokeStyle = 'rgba(205, 222, 248, 0.18)';
     bCtx.lineWidth = 2;
     bCtx.beginPath();
-    bCtx.moveTo(48, 80);
-    bCtx.lineTo(976, 80);
+    bCtx.moveTo(44, 88);
+    bCtx.lineTo(980, 88);
     bCtx.stroke();
 
-    const barColors = ['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+    // Vivid Pastel Bar Graph Palette (pops clearly on deep navy)
+    const pastelBars = ['#F48B94', '#7EB8F0', '#7AD3A4', '#F5CA73', '#BCA2F2'];
     const count = Math.max(1, results.length);
-    const rowHeight = Math.min(130, 520 / count);
+    const rowHeight = Math.min(130, 505 / count);
 
     results.forEach((item, idx) => {
-      const topY = 96 + idx * rowHeight;
-      const barY = topY + Math.min(38, rowHeight * 0.44);
-      const barH = Math.max(18, Math.min(28, rowHeight * 0.32));
+      const topY = 104 + idx * rowHeight;
+      const barY = topY + Math.min(40, rowHeight * 0.45);
+      const barH = Math.max(20, Math.min(30, rowHeight * 0.34));
+      const color = pastelBars[idx % pastelBars.length];
 
-      // Candidate Number Badge
-      bCtx.fillStyle = barColors[idx % barColors.length];
+      // Rounded Pastel Candidate Number Badge
+      bCtx.fillStyle = color;
       bCtx.beginPath();
-      bCtx.arc(76, topY + 20, 20, 0, Math.PI * 2);
+      bCtx.arc(76, topY + 20, 21, 0, Math.PI * 2);
       bCtx.fill();
 
-      bCtx.fillStyle = '#ffffff';
-      bCtx.font = 'bold 22px sans-serif';
+      bCtx.fillStyle = '#1B253E';
+      bCtx.font = 'bold 22px "Pretendard", sans-serif';
       bCtx.textAlign = 'center';
       bCtx.textBaseline = 'middle';
-      bCtx.fillText(`${idx + 1}`, 76, topY + 20);
+      bCtx.fillText(`${idx + 1}`, 76, topY + 21);
 
-      // Title
+      // Candidate Title
       bCtx.textAlign = 'left';
-      bCtx.fillStyle = '#f8fafc';
-      bCtx.font = 'bold 26px "Pretendard", sans-serif';
-      const displayTitle = item.title.length > 22 ? item.title.slice(0, 22) + '...' : item.title;
-      bCtx.fillText(displayTitle, 115, topY + 20);
+      bCtx.fillStyle = '#FFF9F0';
+      bCtx.font = 'bold 26px "Pretendard", "Noto Sans KR", sans-serif';
+      const displayTitle = item.title.length > 21 ? item.title.slice(0, 21) + '...' : item.title;
+      bCtx.fillText(displayTitle, 114, topY + 21);
 
       // Percentage & votes
       bCtx.textAlign = 'right';
-      bCtx.fillStyle = barColors[idx % barColors.length];
-      bCtx.font = 'bold 28px monospace';
-      bCtx.fillText(`${item.percent}%`, 840, topY + 20);
+      bCtx.fillStyle = color;
+      bCtx.font = 'bold 28px "Pretendard", monospace';
+      bCtx.fillText(`${item.percent}%`, 844, topY + 21);
 
-      bCtx.fillStyle = '#94a3b8';
-      bCtx.font = '500 20px sans-serif';
-      bCtx.fillText(`(${item.votes}표)`, 976, topY + 20);
+      bCtx.fillStyle = '#B8C7E0';
+      bCtx.font = '600 20px "Pretendard", sans-serif';
+      bCtx.fillText(`(${item.votes}표)`, 972, topY + 21);
 
-      // Bar Track Background
-      bCtx.fillStyle = '#1e293b';
+      // Rounded Pill Bar Track
+      bCtx.fillStyle = '#2A3859';
       bCtx.beginPath();
-      bCtx.roundRect(115, barY, 861, barH, 6);
+      bCtx.roundRect(114, barY, 858, barH, barH / 2);
       bCtx.fill();
 
-      // Filled Animated Bar
-      const fillW = Math.max(12, (861 * item.percent) / 100);
-      bCtx.fillStyle = barColors[idx % barColors.length];
+      // Filled Vivid Pastel Pill Bar
+      const fillW = Math.max(barH, (858 * item.percent) / 100);
+      bCtx.fillStyle = color;
       bCtx.beginPath();
-      bCtx.roundRect(115, barY, fillW, barH, 6);
+      bCtx.roundRect(114, barY, fillW, barH, barH / 2);
+      bCtx.fill();
+
+      // Subtle top gloss highlight on pastel bar
+      bCtx.fillStyle = 'rgba(255, 255, 255, 0.24)';
+      bCtx.beginPath();
+      bCtx.roundRect(120, barY + 3, Math.max(8, fillW - 12), Math.max(4, barH * 0.28), 6);
       bCtx.fill();
     });
 
@@ -972,14 +1645,14 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   );
 
   // ========================================================
-  // Animated Interactive Floor Beacons
+  // Animated Interactive Floor Beacons (Exact coordinates preserved)
   // ========================================================
   const beaconRings: { mesh: THREE.Mesh; step: number }[] = [];
 
   const createBeacon = (x: number, z: number, step: number) => {
-    const ringGeo = new THREE.RingGeometry(0.8, 1.05, 32);
+    const ringGeo = new THREE.RingGeometry(0.8, 1.05, 36);
     const ringMat = new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
+      color: 0x6eaee8,
       transparent: true,
       opacity: 0.6,
       side: THREE.DoubleSide,
@@ -999,10 +1672,10 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   createBeacon(5.5, -3.3, 3);  // Box beacon
   createBeacon(6.2, 1.8, 4);   // Billboard beacon
 
-  // Dedicated bright green floor interaction circle in front of '출구 EXIT ▶'
+  // Dedicated soft sage floor interaction circle in front of '출구 EXIT ▶'
   const exitRingGeo = new THREE.RingGeometry(0.85, 1.12, 36);
   const exitRingMat = new THREE.MeshBasicMaterial({
-    color: 0x22c55e,
+    color: 0x5dae74,
     transparent: true,
     opacity: 0.85,
     side: THREE.DoubleSide,
@@ -1017,7 +1690,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
 
   const exitDiscGeo = new THREE.CircleGeometry(0.85, 36);
   const exitDiscMat = new THREE.MeshBasicMaterial({
-    color: 0x16a34a,
+    color: 0x6dc485,
     transparent: true,
     opacity: 0.22,
     side: THREE.DoubleSide,
@@ -1034,18 +1707,19 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     beaconRings.forEach(({ mesh, step }) => {
       const mat = mesh.material as THREE.MeshBasicMaterial;
       if (step === currentStep) {
-        mat.color.setHex(0xf59e0b); // Active glowing golden amber
+        mat.color.setHex(0xf2a93b); // Warm glowing honey amber
         mat.opacity = 0.85;
       } else if (step < currentStep) {
-        mat.color.setHex(0x10b981); // Completed green
-        mat.opacity = 0.35;
+        mat.color.setHex(0x5dae74); // Completed soft sage green
+        mat.opacity = 0.4;
       } else {
-        mat.color.setHex(0x94a3b8); // Pending subtle grey
-        mat.opacity = 0.2;
+        mat.color.setHex(0xb8a898); // Pending warm taupe
+        mat.opacity = 0.28;
       }
     });
   };
 
+  // Exact Station Locations (100% preserved)
   const stationLocations: StationLocation[] = [
     { zone: 'desk', position: new THREE.Vector3(-6.5, 0, -3.2), name: '본인확인 및 교부대', stepNumber: 1 },
     { zone: 'booth', position: new THREE.Vector3(0.0, 0, -3.6), name: '기표소', stepNumber: 2 },

@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
-import { AvatarType } from '../types';
+import { AvatarType, AVATAR_META, normalizeAvatarType } from '../types';
 import { sounds } from '../sound';
 import { Download, Award, X, Sparkles, BarChart3, Vote, Footprints } from 'lucide-react';
+import { AvatarIllustration } from './AvatarIllustration';
 
 interface CertificateModalProps {
   nickname: string;
@@ -25,6 +26,8 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
   onOpenLobby,
 }) => {
   const certCardRef = useRef<HTMLDivElement | null>(null);
+  const normalizedAvatar = normalizeAvatarType(avatarType);
+  const avatarMeta = AVATAR_META[normalizedAvatar];
 
   // Generate and download high-resolution PNG using HTML Canvas
   const handleDownloadImage = () => {
@@ -79,14 +82,109 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
     ctx.lineTo(1000, 390);
     ctx.stroke();
 
-    // Voter Details Block
+    // Voter Details Block + Miniature Avatar Emblem on Canvas
+    const avCx = 915;
+    const avCy = 575;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(avCx, avCy, 86, 0, Math.PI * 2);
+    ctx.fillStyle = avatarMeta.bgSoft;
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#d6c3a5';
+    ctx.stroke();
+    ctx.clip();
+
+    // Mini shoulders/top
+    ctx.fillStyle = normalizedAvatar === 'female_2' ? '#FFFDF8' : avatarMeta.topColor;
+    ctx.beginPath();
+    ctx.arc(avCx, avCy + 82, 62, Math.PI, 0);
+    ctx.fill();
+    if (normalizedAvatar === 'female_2') {
+      ctx.fillStyle = avatarMeta.topColor;
+      ctx.fillRect(avCx - 30, avCy + 28, 60, 62);
+    } else if (normalizedAvatar === 'male_3') {
+      ctx.fillStyle = '#FAF3E7';
+      ctx.beginPath();
+      ctx.moveTo(avCx - 16, avCy + 26);
+      ctx.lineTo(avCx, avCy + 64);
+      ctx.lineTo(avCx + 16, avCy + 26);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Back hair for female styles
+    ctx.fillStyle = avatarMeta.hairColor;
+    if (normalizedAvatar === 'female_1') {
+      ctx.beginPath();
+      ctx.arc(avCx, avCy - 4, 46, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (normalizedAvatar === 'female_2') {
+      ctx.beginPath();
+      ctx.arc(avCx + 36, avCy + 10, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(avCx, avCy - 10, 41, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (normalizedAvatar === 'female_3') {
+      ctx.fillRect(avCx - 44, avCy - 24, 88, 96);
+    }
+
+    // Head
+    ctx.fillStyle = '#F8D5BC';
+    ctx.beginPath();
+    ctx.arc(avCx, avCy - 10, 36, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Cheek blushes
+    ctx.fillStyle = 'rgba(242, 159, 159, 0.6)';
+    ctx.beginPath();
+    ctx.ellipse(avCx - 20, avCy, 8, 5, 0, 0, Math.PI * 2);
+    ctx.ellipse(avCx + 20, avCy, 8, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Dot eyes
+    ctx.fillStyle = '#2A1F1A';
+    ctx.beginPath();
+    ctx.arc(avCx - 13, avCy - 8, 4.5, 0, Math.PI * 2);
+    ctx.arc(avCx + 13, avCy - 8, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Glasses for male_3
+    if (avatarMeta.hasGlasses) {
+      ctx.strokeStyle = '#2E2019';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(avCx - 13, avCy - 8, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(avCx + 13, avCy - 8, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(avCx - 2, avCy - 8);
+      ctx.lineTo(avCx + 2, avCy - 8);
+      ctx.stroke();
+    }
+
+    // Top hair dome
+    ctx.fillStyle = avatarMeta.hairColor;
+    ctx.beginPath();
+    ctx.arc(avCx, avCy - 18, 37, Math.PI, 0);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#78716c';
+    ctx.font = 'bold 20px "Noto Sans KR", sans-serif';
+    ctx.fillText(avatarMeta.fullName, avCx, avCy + 114);
+
     ctx.textAlign = 'left';
     ctx.fillStyle = '#44403c';
     ctx.font = 'bold 32px "Noto Sans KR", sans-serif';
-    ctx.fillText(`선거인 성명 :  ${nickname}`, 220, 480);
-    ctx.fillText(`투표 일시   :  ${timestamp}`, 220, 545);
-    ctx.fillText(`투표 구분   :  ${pollTitle || '제1회 모의선거'}`, 220, 610);
-    ctx.fillText(`관할 구역   :  서울특별시 가상 제1투표구`, 220, 675);
+    ctx.fillText(`선거인 성명 :  ${nickname}`, 180, 480);
+    ctx.fillText(`아바타 캐릭터 :  ${avatarMeta.fullName}`, 180, 545);
+    ctx.fillText(`투표 일시   :  ${timestamp}`, 180, 610);
+    ctx.fillText(`투표 구분   :  ${pollTitle || '제1회 모의선거'}`, 180, 675);
 
     // Main Certificate Body Text
     ctx.textAlign = 'center';
@@ -205,30 +303,22 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
 
               {/* Voter Avatar & Info */}
               <div className="bg-stone-50/90 border border-stone-200/80 rounded-xl p-3 mb-4 font-sans text-left flex items-center gap-3 sm:gap-4">
-                {/* Avatar Icon */}
-                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-slate-200 border-2 border-stone-300 flex items-center justify-center shrink-0 overflow-hidden">
-                  {avatarType === 'male' ? (
-                    <div className="relative w-full h-full flex items-center justify-center bg-sky-950">
-                      <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#ffdfc4] relative -top-1">
-                        <div className="absolute -top-1 inset-x-0 h-3 bg-[#221f1e] rounded-t-full" />
-                      </div>
-                      <div className="absolute bottom-0 w-7 sm:w-8 h-3.5 sm:h-4 bg-[#1e3a8a] rounded-t-md" />
-                    </div>
-                  ) : (
-                    <div className="relative w-full h-full flex items-center justify-center bg-amber-950">
-                      <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#ffdfc4] relative -top-1">
-                        <div className="absolute -top-1 -inset-x-1 h-4 bg-[#3d271d] rounded-t-full" />
-                      </div>
-                      <div className="absolute bottom-0 w-7 sm:w-8 h-3.5 sm:h-4 bg-[#d6bba2] rounded-t-md" />
-                    </div>
-                  )}
+                {/* Avatar Icon (6-variant clay miniature illustration) */}
+                <div className="w-13 h-13 sm:w-15 sm:h-15 rounded-full border-2 border-[#d6c3a5] flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                  <AvatarIllustration avatarType={normalizedAvatar} className="w-full h-full" />
                 </div>
 
                 {/* Info text */}
                 <div className="space-y-1 text-xs min-w-0">
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-stone-500 shrink-0">선거인:</span>
                     <span className="font-bold text-stone-900 truncate">{nickname}</span>
+                    <span
+                      className="px-1.5 py-0.5 rounded-md text-[10px] font-bold border border-stone-200 text-stone-700 shrink-0"
+                      style={{ backgroundColor: avatarMeta.bgSoft }}
+                    >
+                      {avatarMeta.shortName}
+                    </span>
                   </div>
                   <div className="flex gap-2">
                     <span className="text-stone-500 shrink-0">투표일시:</span>
