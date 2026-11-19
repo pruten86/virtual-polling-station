@@ -610,7 +610,6 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                 key={item.label}
                 type="button"
                 onClick={() => {
-                  sounds.playClick();
                   onSendEmote(item.emoji, item.label, item.id);
                 }}
                 className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-slate-800/90 hover:bg-sky-600/30 border border-slate-700 hover:border-sky-400/50 text-slate-100 text-[10px] sm:text-[11px] font-bold transition active:scale-95 cursor-pointer whitespace-nowrap"

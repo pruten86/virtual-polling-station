@@ -4,7 +4,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import confetti from 'canvas-confetti';
 
 import { AvatarType, Candidate, StationZone, PollStation, PollChannelData } from './types';
-import { sounds } from './sound';
+import { sounds, playEmoteSound } from './sound';
 import {
   createProceduralAvatar,
   createNameTagSprite,
@@ -317,6 +317,7 @@ export default function App() {
     >
   >(new Map());
   const roomHandleRef = useRef<MultiplayerRoomHandle | null>(null);
+  const remoteEmoteSoundTimeRef = useRef<Map<string, number>>(new Map());
   const presenceCountRef = useRef<number>(1);
   const lobbyPollCountRef = useRef<number>(0);
   const onlineCountRef = useRef<number>(1);
@@ -669,6 +670,14 @@ export default function App() {
       setOnlineCount((prev) => (prev === nextCount ? prev : nextCount));
     };
 
+    const playRemoteEmoteSound = (peerId: string, emoteType: string) => {
+      const nowMs = Date.now();
+      const lastPlayedAt = remoteEmoteSoundTimeRef.current.get(peerId) || 0;
+      if (nowMs - lastPlayedAt < 2500) return;
+      remoteEmoteSoundTimeRef.current.set(peerId, nowMs);
+      playEmoteSound(emoteType, true);
+    };
+
     const upsertRemoteAvatar = (peer: RemotePlayer) => {
       if (!peer || !peer.userId || peer.userId === multiplayerPeerId) return;
 
@@ -697,6 +706,7 @@ export default function App() {
         if (peer.emoteId && peer.emoteSeq && peer.emoteSeq > 0) {
           initialEmoteSeq = peer.emoteSeq;
           controller.triggerEmote(peer.emoteEmoji || peer.emoteId, peer.emoteText, peer.emoteId);
+          playRemoteEmoteSound(peer.userId, peer.emoteId);
         }
 
         currentMap.set(peer.userId, {
@@ -735,6 +745,7 @@ export default function App() {
             peer.emoteText,
             peer.emoteId
           );
+          playRemoteEmoteSound(peer.userId, peer.emoteId);
         }
       }
 
@@ -749,6 +760,7 @@ export default function App() {
         }
         currentMap.delete(userId);
       }
+      remoteEmoteSoundTimeRef.current.delete(userId);
       presenceCountRef.current = Math.min(presenceCountRef.current, 1 + currentMap.size);
       refreshOnlineCount();
     };
@@ -788,6 +800,7 @@ export default function App() {
           if (entry && (!seq || seq > (entry.lastEmoteSeq || 0))) {
             if (seq) entry.lastEmoteSeq = seq;
             entry.controller.triggerEmote(emoji || emoteId, text, emoteId);
+            playRemoteEmoteSound(userId, emoteId);
           }
         },
         onVoteCast: ({ userId, nickname: voterName }) => {
@@ -859,6 +872,7 @@ export default function App() {
         }
       }
       currentMap.clear();
+      remoteEmoteSoundTimeRef.current.clear();
       presenceCountRef.current = 1;
       setOnlineCount(1);
       setIsRealtimeConnected(false);
@@ -1738,6 +1752,7 @@ export default function App() {
   };
 
   const handleSendEmote = useCallback((emoji: string, label: string, emoteId: EmoteId) => {
+    playEmoteSound(emoteId, false);
     playerRef.current?.triggerEmote(emoji, label, emoteId);
     roomHandleRef.current?.sendEmote(emoji, label, emoteId);
   }, []);
