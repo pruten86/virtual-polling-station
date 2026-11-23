@@ -269,7 +269,7 @@ export function createProceduralAvatar(
   // Matte clay & knit PBR materials (roughness: 0.82, metalness: 0.0)
   const skinMat = new THREE.MeshStandardMaterial({
     color: 0xf8d5bc,
-    roughness: 0.8,
+    roughness: 0.82,
     metalness: 0.0,
   });
 
@@ -851,15 +851,65 @@ export function createProceduralAvatar(
   }
 
   // ========================================================
-  // 2-Segment Articulated Clay Arms (Shoulder + Elbow + Hand)
-  // Upper arm: 0.185m + Forearm & hand: 0.195m = 0.38m reach (+18% vs old 0.32m)
+  // 2-Segment Articulated Clay Arms + Sculpted Open Clay Hands
+  // (Flattened rounded palm + inward small thumb + 4 neatly spread rounded clay fingers)
   // ========================================================
   const upperArmGeo = new THREE.CapsuleGeometry(0.055, 0.115, 8, 14);
   const elbowBallGeo = new THREE.SphereGeometry(0.052, 12, 10);
   const forearmGeo = new THREE.CapsuleGeometry(0.049, 0.095, 8, 14);
-  const handGeo = new THREE.SphereGeometry(0.054, 14, 12);
 
-  // Left Arm (Shoulder Pivot -> Upper Arm -> Elbow Pivot -> Forearm + Hand)
+  const wristCapGeo = new THREE.SphereGeometry(0.032, 10, 8);
+  const palmGeo = new THREE.SphereGeometry(0.048, 16, 12);
+  const thumbGeo = new THREE.CapsuleGeometry(0.014, 0.022, 6, 10);
+  const fingerIndexGeo = new THREE.CapsuleGeometry(0.0112, 0.026, 6, 10);
+  const fingerMiddleGeo = new THREE.CapsuleGeometry(0.0115, 0.031, 6, 10);
+  const fingerRingGeo = new THREE.CapsuleGeometry(0.0112, 0.027, 6, 10);
+  const fingerPinkyGeo = new THREE.CapsuleGeometry(0.0102, 0.020, 6, 10);
+
+  const buildOpenClayHand = (side: -1 | 1): THREE.Group => {
+    // side = -1 (left arm, palm faces +X inward), side = +1 (right arm, palm faces -X inward)
+    const handGroup = new THREE.Group();
+    handGroup.name = side === -1 ? 'leftHand' : 'rightHand';
+
+    // Seamless rounded wrist join
+    const wristCap = new THREE.Mesh(wristCapGeo, skinMat);
+    wristCap.position.set(0, -0.008, 0);
+    handGroup.add(wristCap);
+
+    // Flattened rounded clay palm
+    const palm = new THREE.Mesh(palmGeo, skinMat);
+    palm.scale.set(0.52, 1.0, 0.96);
+    palm.position.set(0, -0.044, 0);
+    palm.castShadow = true;
+    palm.receiveShadow = true;
+    handGroup.add(palm);
+
+    // Cute rounded thumb angled forward (+Z) and gently inward toward palm
+    const thumb = new THREE.Mesh(thumbGeo, skinMat);
+    thumb.position.set(-side * 0.007, -0.042, 0.046);
+    thumb.rotation.set(0.68, 0, side * 0.14);
+    thumb.castShadow = true;
+    handGroup.add(thumb);
+
+    // 4 neatly spread rounded clay fingers (index -> middle -> ring -> pinky)
+    const fingerSpecs = [
+      { geo: fingerIndexGeo, z: 0.028, y: -0.088, rotX: 0.14 },
+      { geo: fingerMiddleGeo, z: 0.009, y: -0.092, rotX: 0.04 },
+      { geo: fingerRingGeo, z: -0.010, y: -0.090, rotX: -0.05 },
+      { geo: fingerPinkyGeo, z: -0.028, y: -0.083, rotX: -0.15 },
+    ];
+    fingerSpecs.forEach(({ geo, z, y, rotX }) => {
+      const finger = new THREE.Mesh(geo, skinMat);
+      finger.position.set(0, y, z);
+      finger.rotation.x = rotX;
+      finger.castShadow = true;
+      handGroup.add(finger);
+    });
+
+    return handGroup;
+  };
+
+  // Left Arm (Shoulder Pivot -> Upper Arm -> Elbow Pivot -> Forearm + Open Clay Hand)
   const leftArm = new THREE.Group();
   leftArm.name = 'leftArm';
   leftArm.position.set(LEFT_SHOULDER_BASE_X, SHOULDER_BASE_Y, SHOULDER_BASE_Z);
@@ -885,14 +935,13 @@ export function createProceduralAvatar(
   leftForearm.receiveShadow = true;
   leftElbow.add(leftForearm);
 
-  const leftHand = new THREE.Mesh(handGeo, skinMat);
-  leftHand.position.y = -0.195;
-  leftHand.castShadow = true;
+  const leftHand = buildOpenClayHand(-1);
+  leftHand.position.set(0, -0.158, 0);
   leftElbow.add(leftHand);
 
   torsoGroup.add(leftArm);
 
-  // Right Arm (Shoulder Pivot -> Upper Arm -> Elbow Pivot -> Forearm + Hand)
+  // Right Arm (Shoulder Pivot -> Upper Arm -> Elbow Pivot -> Forearm + Open Clay Hand)
   const rightArm = new THREE.Group();
   rightArm.name = 'rightArm';
   rightArm.position.set(RIGHT_SHOULDER_BASE_X, SHOULDER_BASE_Y, SHOULDER_BASE_Z);
@@ -918,9 +967,8 @@ export function createProceduralAvatar(
   rightForearm.receiveShadow = true;
   rightElbow.add(rightForearm);
 
-  const rightHand = new THREE.Mesh(handGeo, skinMat);
-  rightHand.position.y = -0.195;
-  rightHand.castShadow = true;
+  const rightHand = buildOpenClayHand(1);
+  rightHand.position.set(0, -0.158, 0);
   rightElbow.add(rightHand);
 
   torsoGroup.add(rightArm);
@@ -1094,6 +1142,8 @@ export function createProceduralAvatar(
 
   // Animation state tracking
   const EMOTE_TOTAL_DURATION = 2.9;
+  const CLAP_EMOTE_DURATION = 1.72;
+  const CLAP_HIT_TIMES = [0.28, 0.68, 1.08]; // 1:1 synced with playEmoteSound('clap')
   const EMOTE_FADE_DURATION = 0.25;
 
   let walkPhase = 0;
@@ -1128,7 +1178,7 @@ export function createProceduralAvatar(
     }
     emoteSprite.visible = true;
     activeEmoteId = resolvedId;
-    emoteRemaining = EMOTE_TOTAL_DURATION;
+    emoteRemaining = resolvedId === 'clap' ? CLAP_EMOTE_DURATION : EMOTE_TOTAL_DURATION;
     emoteElapsed = 0;
     lastClapBeat = -1;
     jumpBurst1Fired = false;
@@ -1191,6 +1241,13 @@ export function createProceduralAvatar(
     let tRightElbowRotX = -0.14;
     let tRightElbowRotY = 0;
     let tRightElbowRotZ = -0.04;
+
+    let tLeftHandRotX = 0;
+    let tLeftHandRotY = 0;
+    let tLeftHandRotZ = 0;
+    let tRightHandRotX = 0;
+    let tRightHandRotY = 0;
+    let tRightHandRotZ = 0;
 
     let tLeftLegRotX = 0;
     let tRightLegRotX = 0;
@@ -1277,62 +1334,75 @@ export function createProceduralAvatar(
         tRightArmRotX = THREE.MathUtils.lerp(tRightArmRotX, -0.34, w);
         tRightArmRotZ = THREE.MathUtils.lerp(tRightArmRotZ, 1.94 + waveOsc * 0.09, w);
         tRightElbowRotX = THREE.MathUtils.lerp(tRightElbowRotX, -0.22, w);
-        // Elbow ~66° (1.15 rad) bent with breezy ±22° forearm wave
+        // Elbow ~66° (1.15 rad) bent with breezy ±22° forearm wave & open palm facing forward
         tRightElbowRotZ = THREE.MathUtils.lerp(tRightElbowRotZ, 1.15 + waveOsc * 0.38, w);
+        tRightHandRotY = THREE.MathUtils.lerp(tRightHandRotY, -1.15, w);
       } else if (activeEmoteId === 'clap') {
-        // b) [👏 박수]: Synced 0.16s clap rhythm, shoulders pulled inward/forward,
-        //    both elbows deeply folded ~90° so hands physically meet at chest center + sparkle burst!
+        // b) [👏 박수]: Calm, natural 3-hit applause ("짝 · 짝 · 짝") at [0.28, 0.68, 1.08]s
+        //    1:1 synced with Web Audio API sound — open flat clay palms face each other flush and meet at chest center!
         useFastArmLerp = true;
-        const beatInterval = 0.16;
-        // Continuous energetic clap cadence during active window (6 primary claps + light encore)
-        const inActiveClap = t >= 0.06 && t <= 2.35;
-        const beatPos = Math.max(0, (t - 0.06) / beatInterval);
-        const beatIdx = Math.floor(beatPos);
-        const beatFrac = beatPos - beatIdx;
 
-        // Sharp contact impulse around beatFrac ≈ 0.55 so hands meet crisply then rebound open
-        const rawWave = inActiveClap ? Math.pow(Math.max(0, Math.sin(beatFrac * Math.PI)), 1.55) : 0;
-        const clapClose = rawWave; // 1 = hands touching at center, 0 = hands open apart
+        // Compute smooth anticipation -> crisp strike at hitTime -> brief hold & release for each of the 3 hits
+        let clapClose = 0.08;
+        for (let i = 0; i < CLAP_HIT_TIMES.length; i++) {
+          const hitT = CLAP_HIT_TIMES[i];
+          const dtHit = t - hitT;
+          if (dtHit >= -0.16 && dtHit < 0) {
+            // Crisp closing strike leading right into exact audio hit timestamp
+            const u = (dtHit + 0.16) / 0.16;
+            clapClose = Math.max(clapClose, Math.pow(u, 1.85));
+          } else if (dtHit >= 0 && dtHit <= 0.19) {
+            // Brief tactile palm contact (0..0.03s) then calm elastic open rebound
+            const u = Math.max(0, (dtHit - 0.03) / 0.16);
+            const release = 1 - smoothStep(u);
+            clapClose = Math.max(clapClose, 0.08 + release * 0.92);
+          }
 
-        // Trigger pastel 3D sparkle/ring micro-particles right at each hand impact!
-        if (inActiveClap && beatFrac >= 0.48 && beatIdx !== lastClapBeat && beatIdx < 10) {
-          lastClapBeat = beatIdx;
-          spawnClapSparkleBurst();
+          // Trigger 3D sparkle/ring burst strictly ONCE on each of the 3 hits (0.28s, 0.68s, 1.08s)
+          if (t >= hitT && i > lastClapBeat) {
+            lastClapBeat = i;
+            spawnClapSparkleBurst();
+          }
         }
 
-        // Rhythmic shoulder & head perk-up on every clap contact
-        const impactBounce = clapClose * 0.028 * w;
+        // Gentle, poised nod & subtle torso lift synced strictly to the 3 claps
+        const impactBounce = clapClose * 0.018 * w;
         tTorsoY = TORSO_BASE_Y + impactBounce;
-        tTorsoRotX = (0.045 + clapClose * 0.05) * w;
-        tScaleY = 1 + (clapClose * 0.045 - 0.015) * w;
-        tScaleX = 1 - (clapClose * 0.025 - 0.01) * w;
+        tTorsoRotX = (0.035 + clapClose * 0.032) * w;
+        tScaleY = 1 + (clapClose * 0.028 - 0.008) * w;
+        tScaleX = 1 - (clapClose * 0.015 - 0.004) * w;
         tScaleZ = tScaleX;
 
-        tHeadRotX = (0.04 + clapClose * 0.13) * w;
-        tHeadRotZ = Math.sin(t * 6.5) * 0.065 * w;
+        tHeadRotX = (0.03 + clapClose * 0.085) * w;
+        tHeadRotZ = Math.sin(t * 3.8) * 0.04 * w;
 
-        // Pull both shoulders slightly inward (±x) & forward (+z) so forearms comfortably cross chest
-        tLeftArmX = THREE.MathUtils.lerp(LEFT_SHOULDER_BASE_X, -0.192, w);
-        tLeftArmY = THREE.MathUtils.lerp(SHOULDER_BASE_Y, SHOULDER_BASE_Y + clapClose * 0.014, w);
-        tLeftArmZ = THREE.MathUtils.lerp(SHOULDER_BASE_Z, 0.072, w);
+        // Bring shoulders gently forward/inward so forearms meet comfortably in front of chest
+        tLeftArmX = THREE.MathUtils.lerp(LEFT_SHOULDER_BASE_X, -0.184, w);
+        tLeftArmY = THREE.MathUtils.lerp(SHOULDER_BASE_Y, SHOULDER_BASE_Y + clapClose * 0.01, w);
+        tLeftArmZ = THREE.MathUtils.lerp(SHOULDER_BASE_Z, 0.068, w);
 
-        tRightArmX = THREE.MathUtils.lerp(RIGHT_SHOULDER_BASE_X, 0.192, w);
-        tRightArmY = THREE.MathUtils.lerp(SHOULDER_BASE_Y, SHOULDER_BASE_Y + clapClose * 0.014, w);
-        tRightArmZ = THREE.MathUtils.lerp(SHOULDER_BASE_Z, 0.072, w);
+        tRightArmX = THREE.MathUtils.lerp(RIGHT_SHOULDER_BASE_X, 0.184, w);
+        tRightArmY = THREE.MathUtils.lerp(SHOULDER_BASE_Y, SHOULDER_BASE_Y + clapClose * 0.01, w);
+        tRightArmZ = THREE.MathUtils.lerp(SHOULDER_BASE_Z, 0.068, w);
 
-        // Upper arms angled forward; open -> closed sweep
-        tLeftArmRotX = THREE.MathUtils.lerp(tLeftArmRotX, -0.94, w);
-        tLeftArmRotZ = THREE.MathUtils.lerp(tLeftArmRotZ, -0.28 + clapClose * 0.18, w);
-        // Elbow folded deeply inward ~89° (1.56 rad) at impact, opening to ~50° (0.86 rad)
-        tLeftElbowRotX = THREE.MathUtils.lerp(tLeftElbowRotX, -0.18, w);
-        tLeftElbowRotY = THREE.MathUtils.lerp(tLeftElbowRotY, -0.44 * (0.65 + 0.35 * clapClose), w);
-        tLeftElbowRotZ = THREE.MathUtils.lerp(tLeftElbowRotZ, 0.86 + clapClose * 0.70, w);
+        // Upper arms angled forward; swing inward on Y axis from open (0.08 rad) to palm-to-palm slap (0.58 rad)
+        tLeftArmRotX = THREE.MathUtils.lerp(tLeftArmRotX, -0.52, w);
+        tLeftArmRotY = THREE.MathUtils.lerp(tLeftArmRotY, 0.06 + clapClose * 0.52, w);
+        tLeftArmRotZ = THREE.MathUtils.lerp(tLeftArmRotZ, -0.06, w);
+        // Elbows cleanly bent forward so thumbs point up and open palms face each other
+        tLeftElbowRotX = THREE.MathUtils.lerp(tLeftElbowRotX, -1.28, w);
+        tLeftElbowRotY = THREE.MathUtils.lerp(tLeftElbowRotY, 0, w);
+        tLeftElbowRotZ = THREE.MathUtils.lerp(tLeftElbowRotZ, 0.05, w);
+        // Counter-rotate wrist slightly so flat open palms meet flush parallel at x = 0
+        tLeftHandRotZ = THREE.MathUtils.lerp(tLeftHandRotZ, -0.44 * clapClose, w);
 
-        tRightArmRotX = THREE.MathUtils.lerp(tRightArmRotX, -0.94, w);
-        tRightArmRotZ = THREE.MathUtils.lerp(tRightArmRotZ, 0.28 - clapClose * 0.18, w);
-        tRightElbowRotX = THREE.MathUtils.lerp(tRightElbowRotX, -0.18, w);
-        tRightElbowRotY = THREE.MathUtils.lerp(tRightElbowRotY, 0.44 * (0.65 + 0.35 * clapClose), w);
-        tRightElbowRotZ = THREE.MathUtils.lerp(tRightElbowRotZ, -0.86 - clapClose * 0.70, w);
+        tRightArmRotX = THREE.MathUtils.lerp(tRightArmRotX, -0.52, w);
+        tRightArmRotY = THREE.MathUtils.lerp(tRightArmRotY, -(0.06 + clapClose * 0.52), w);
+        tRightArmRotZ = THREE.MathUtils.lerp(tRightArmRotZ, 0.06, w);
+        tRightElbowRotX = THREE.MathUtils.lerp(tRightElbowRotX, -1.28, w);
+        tRightElbowRotY = THREE.MathUtils.lerp(tRightElbowRotY, 0, w);
+        tRightElbowRotZ = THREE.MathUtils.lerp(tRightElbowRotZ, -0.05, w);
+        tRightHandRotZ = THREE.MathUtils.lerp(tRightHandRotZ, 0.44 * clapClose, w);
       } else if (activeEmoteId === 'think') {
         // c) [🤔 신중고민]: Shifted weight, slight torso twist, left hand on hip,
         //    right shoulder raised + right elbow deeply bent so rightHand rests directly under chin!
@@ -1581,6 +1651,14 @@ export function createProceduralAvatar(
     rightElbow.rotation.x = THREE.MathUtils.lerp(rightElbow.rotation.x, tRightElbowRotX, armSmooth);
     rightElbow.rotation.y = THREE.MathUtils.lerp(rightElbow.rotation.y, tRightElbowRotY, armSmooth);
     rightElbow.rotation.z = THREE.MathUtils.lerp(rightElbow.rotation.z, tRightElbowRotZ, armSmooth);
+
+    leftHand.rotation.x = THREE.MathUtils.lerp(leftHand.rotation.x, tLeftHandRotX, armSmooth);
+    leftHand.rotation.y = THREE.MathUtils.lerp(leftHand.rotation.y, tLeftHandRotY, armSmooth);
+    leftHand.rotation.z = THREE.MathUtils.lerp(leftHand.rotation.z, tLeftHandRotZ, armSmooth);
+
+    rightHand.rotation.x = THREE.MathUtils.lerp(rightHand.rotation.x, tRightHandRotX, armSmooth);
+    rightHand.rotation.y = THREE.MathUtils.lerp(rightHand.rotation.y, tRightHandRotY, armSmooth);
+    rightHand.rotation.z = THREE.MathUtils.lerp(rightHand.rotation.z, tRightHandRotZ, armSmooth);
 
     // Ground shadow blob gently tightens when jumping for realistic miniature contact depth
     const shadowScale = Math.max(0.62, 1.0 - currentHopY * 0.55);

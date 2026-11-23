@@ -349,24 +349,24 @@ class SoundSystem {
         }
 
         if (kind === 'clap') {
-          // 5 crisp hand claps at 0.16s intervals synced to avatar clap motion ("짝! 짝! 짝! 짝! 짝!")
-          const clapCount = 5;
-          const interval = 0.16;
-          const duration = 0.11;
+          // Calm, crisp 3-hit applause ("짝! · 짝! · 짝!") synced 1:1 with 3D avatar palm impact timestamps
+          const clapTimestamps = [0.28, 0.68, 1.08];
+          const duration = 0.125;
           const sampleCount = Math.floor(ctx.sampleRate * duration);
 
-          for (let i = 0; i < clapCount; i++) {
-            const clapStart = now + i * interval;
+          clapTimestamps.forEach((offsetSec, i) => {
+            const clapStart = now + offsetSec;
             const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
             const data = buffer.getChannelData(0);
             for (let s = 0; s < sampleCount; s++) {
               data[s] = Math.random() * 2 - 1;
             }
 
-            // Two tightly spaced micro-transients (0ms & 7ms) replicate realistic palm impact
+            // Two tightly spaced micro-transients (0ms & 7ms) replicate realistic palm-to-palm clap
+            const emphasis = i === 2 ? 1.04 : 0.96 + i * 0.03;
             const layers = [
-              { offset: 0, gainPeak: (0.48 - i * 0.025) * vol, decay: 0.08 },
-              { offset: 0.008, gainPeak: (0.34 - i * 0.015) * vol, decay: 0.075 },
+              { offset: 0, gainPeak: 0.5 * emphasis * vol, decay: 0.088, freqBase: 1180 },
+              { offset: 0.007, gainPeak: 0.34 * emphasis * vol, decay: 0.078, freqBase: 1420 },
             ];
 
             layers.forEach((layer) => {
@@ -375,19 +375,17 @@ class SoundSystem {
 
               const bandpass = ctx.createBiquadFilter();
               bandpass.type = 'bandpass';
-              // Center frequency 1100~1400Hz with slight natural variation per clap
               bandpass.frequency.setValueAtTime(
-                1100 + Math.random() * 300,
+                layer.freqBase + (Math.random() - 0.5) * 140,
                 clapStart + layer.offset
               );
-              bandpass.Q.setValueAtTime(1.5, clapStart + layer.offset);
+              bandpass.Q.setValueAtTime(1.45, clapStart + layer.offset);
 
               const gain = ctx.createGain();
               const t0 = clapStart + layer.offset;
               gain.gain.setValueAtTime(0.0001, t0);
-              // Short 5ms attack + fast 80ms exponential decay
-              gain.gain.linearRampToValueAtTime(Math.max(0.05, layer.gainPeak), t0 + 0.005);
-              gain.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.005 + layer.decay);
+              gain.gain.linearRampToValueAtTime(Math.max(0.05, layer.gainPeak), t0 + 0.004);
+              gain.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.004 + layer.decay);
 
               src.connect(bandpass);
               bandpass.connect(gain);
@@ -396,7 +394,7 @@ class SoundSystem {
               src.start(t0);
               src.stop(t0 + duration);
             });
-          }
+          });
           return;
         }
 

@@ -11,6 +11,7 @@ import {
   StationZone,
   PollStation,
   PollChannelData,
+  normalizeResultVisibility,
 } from './types';
 import { sounds, playEmoteSound } from './sound';
 import {
@@ -29,6 +30,7 @@ import {
   isPollPermanent,
   computeOfficialStationNumber,
   getPollWinnerSummary,
+  formatScheduledDeadlineKorean,
 } from './data/presetPolls';
 import {
   ensureAnonymousAuth,
@@ -635,7 +637,7 @@ export default function App() {
   const isPollClosedForBoard =
     !isPollPermanent(currentPoll) && Boolean(currentPoll.expiresAt && currentPoll.expiresAt <= nowTs);
 
-  // Sync billboard & banner with latest candidate tallies, poll title, and closed state
+  // Sync billboard & banner with latest candidate tallies, poll title, closed state, and resultVisibility
   useEffect(() => {
     if (envResultRef.current) {
       const total = candidates.reduce((s, c) => s + c.votes, 0);
@@ -645,11 +647,23 @@ export default function App() {
         votes: c.votes,
         percent: total > 0 ? Math.round((c.votes / total) * 100) : 0,
       }));
+      const hideResultsForBoard =
+        normalizeResultVisibility(currentPoll.resultVisibility) === 'after_close' &&
+        !isPollClosedForBoard;
+      const scheduledDeadlineText =
+        !isPollPermanent(currentPoll) && currentPoll.expiresAt
+          ? formatScheduledDeadlineKorean(currentPoll.expiresAt)
+          : '방장 개표 확정 시 공개';
+
       envResultRef.current.updateBillboardTexture(
         results,
         total,
         currentPoll.title,
-        isPollClosedForBoard
+        isPollClosedForBoard,
+        {
+          hideResults: hideResultsForBoard,
+          scheduledDeadlineText,
+        }
       );
       envResultRef.current.updateBannerTitle(currentPoll.title);
     }
@@ -1088,8 +1102,13 @@ export default function App() {
       // Refresh authoritative candidate tallies strictly from Supabase DB
       syncTalliesFromDB(currentPoll, freshCandidates);
 
+      const isAfterCloseSealed =
+        normalizeResultVisibility(currentPoll.resultVisibility) === 'after_close' &&
+        !isPollClosedForBoard;
       showToast(
-        currentPoll.isOfficial
+        isAfterCloseSealed
+          ? '투표함에 투표용지가 투입되었습니다! 개표 결과는 투표 마감 후 공개됩니다.'
+          : currentPoll.isOfficial
           ? `투표용지가 투입되었습니다! (제${latestChannelIdx}투표소에 기록됨) 4번 개표 전광판을 확인하세요.`
           : '투표함에 투표용지가 투입되었습니다! 4번 개표 전광판에서 실시간 결과를 확인하세요.'
       );
@@ -1871,6 +1890,7 @@ export default function App() {
             isClosed={isLobbyPollClosed}
             expiresAt={syncedLobbyPoll.expiresAt}
             isPermanent={isPollPermanent(syncedLobbyPoll)}
+            resultVisibility={syncedLobbyPoll.resultVisibility}
             canClosePoll={canCloseLobbyPoll}
             isLobbyDirectView
             initialOpenOfficialDocs={Boolean(lobbyResultsPoll.openOfficialDocs)}
@@ -1921,6 +1941,7 @@ export default function App() {
           isOfficial={currentPoll.isOfficial}
           isPermanent={isPollPermanent(currentPoll)}
           expiresAt={currentPoll.expiresAt}
+          resultVisibility={currentPoll.resultVisibility}
           activeChannelIndex={officialChannelState.activeChannelIndex}
           channelVotes={officialChannelState.channelVotes}
           cumulativeVotes={officialChannelState.totalCumulativeVotes}
@@ -1975,6 +1996,7 @@ export default function App() {
           isClosed={isCurrentPollClosed}
           expiresAt={currentPoll.expiresAt}
           isPermanent={isPollPermanent(currentPoll)}
+          resultVisibility={currentPoll.resultVisibility}
           canClosePoll={canCloseCurrentPoll}
           onClosePollNow={canCloseCurrentPoll ? () => handleClosePollNow(currentPoll) : undefined}
           isOfficial={currentPoll.isOfficial}

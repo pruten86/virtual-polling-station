@@ -410,7 +410,7 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
               </span>
             </div>
             <div className="shrink-0 font-serif font-bold text-red-700 tracking-wider border border-red-400 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] whitespace-nowrap">
-              가상선거관리위원회
+              보트버스 선거관리위원회
             </div>
           </div>
 

@@ -387,10 +387,10 @@ export async function renderWinnerCertificateCanvas(
 
   // Authority + Official Red Square Seal Stamp
   ctx.fillStyle = '#0c4a6e';
-  ctx.font = '800 30px "Song Myung", "Noto Serif KR", serif';
-  ctx.fillText('보트버스(VOTEVERSE) 중앙일상선거관리위원회', W / 2 - 58, 1212);
+  ctx.font = '800 32px "Song Myung", "Noto Serif KR", serif';
+  ctx.fillText('보트버스(VOTEVERSE) 선거관리위원회', W / 2 - 48, 1212);
 
-  const sealX = W / 2 + 295;
+  const sealX = W / 2 + 278;
   const sealY = 1208;
   ctx.save();
   ctx.strokeStyle = '#dc2626';

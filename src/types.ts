@@ -149,6 +149,12 @@ export interface PollChannelData {
   totalVotes: number;
 }
 
+export type ResultVisibility = 'realtime' | 'after_close';
+
+export function normalizeResultVisibility(raw: unknown): ResultVisibility {
+  return raw === 'after_close' ? 'after_close' : 'realtime';
+}
+
 export interface PollStation {
   id: string;
   title: string;
@@ -166,6 +172,7 @@ export interface PollStation {
   activeChannelIndex?: number; // current open channel (1, 2, 3...)
   adminPin?: string; // 4-digit creator management PIN
   ownerId?: string; // creator userId / voter UUID
+  resultVisibility?: ResultVisibility; // 'realtime' (default) | 'after_close'
 }
 
 export interface PollingStationState {

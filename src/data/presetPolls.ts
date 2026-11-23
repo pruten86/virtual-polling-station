@@ -1,4 +1,4 @@
-import { PollStation, Candidate, PollChannelData } from '../types';
+import { PollStation, Candidate, PollChannelData, normalizeResultVisibility } from '../types';
 import { supabase, isSupabaseConfigured, ensureAnonymousAuth, GuestbookEntry } from '../lib/supabase';
 
 const ADJECTIVES = [
@@ -194,6 +194,7 @@ export const PRESET_POLLS: PollStation[] = [
     isOfficial: true,
     isPermanent: true,
     expiresAt: undefined,
+    resultVisibility: 'realtime',
     candidates: [
       {
         id: 'poll-lunch-1',
@@ -240,6 +241,7 @@ export const PRESET_POLLS: PollStation[] = [
     isOfficial: true,
     isPermanent: false,
     expiresAt: OFFICIAL_MONDAY11_DEADLINE,
+    resultVisibility: 'realtime',
     candidates: [
       {
         id: 'poll-monday11-1',
@@ -1005,10 +1007,30 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
   }
 
   try {
-    const { data: pollsData, error: pollsError } = await supabase
+    let pollsData: any[] | null = null;
+    let pollsError: any = null;
+
+    const visRes = await supabase
       .from('polls')
-      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
+      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, result_visibility')
       .order('created_at', { ascending: false });
+
+    if (
+      visRes.error &&
+      (visRes.error.code === '42703' ||
+        visRes.error.code === 'PGRST204' ||
+        (visRes.error.message || '').includes('result_visibility'))
+    ) {
+      const baseRes = await supabase
+        .from('polls')
+        .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
+        .order('created_at', { ascending: false });
+      pollsData = baseRes.data;
+      pollsError = baseRes.error;
+    } else {
+      pollsData = visRes.data;
+      pollsError = visRes.error;
+    }
 
     if (pollsError || !pollsData || pollsData.length === 0) {
       return localPolls;
@@ -1064,6 +1086,7 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
         return {
           ...presetMatch,
           expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : presetMatch.expiresAt,
+          resultVisibility: 'realtime',
           candidates: mergedOfficialCandidates,
         };
       }
@@ -1083,6 +1106,9 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
         isCustom: !isOfficial,
         durationHours: Number(row.duration_hours) || 24,
         expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : undefined,
+        resultVisibility: normalizeResultVisibility(
+          row.result_visibility ?? localMatch?.resultVisibility
+        ),
         candidates: candidates.length > 0 ? candidates : localMatch?.candidates || [],
       };
     });
@@ -1115,19 +1141,31 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
 
   if (isSupabaseConfigured && supabase && poll.isCustom) {
     try {
-      // Upsert poll using actual DB columns only (no is_official, access_code, admin_pin)
-      await supabase.from('polls').upsert([
+      // Upsert poll with result_visibility and safe fallback if column doesn't exist yet
+      const basePollRow = {
+        id: poll.id,
+        title: poll.title,
+        description: poll.description,
+        category: poll.category,
+        max_voters: poll.maxVoters,
+        duration_hours: Math.max(1, Math.round(poll.durationHours || 24)),
+        expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
+        created_at: new Date().toISOString(),
+      };
+      const { error: pollUpsertErr } = await supabase.from('polls').upsert([
         {
-          id: poll.id,
-          title: poll.title,
-          description: poll.description,
-          category: poll.category,
-          max_voters: poll.maxVoters,
-          duration_hours: Math.max(1, Math.round(poll.durationHours || 24)),
-          expires_at: poll.expiresAt ? new Date(poll.expiresAt).toISOString() : null,
-          created_at: new Date().toISOString(),
+          ...basePollRow,
+          result_visibility: normalizeResultVisibility(poll.resultVisibility),
         },
       ]);
+      if (
+        pollUpsertErr &&
+        (pollUpsertErr.code === '42703' ||
+          pollUpsertErr.code === 'PGRST204' ||
+          (pollUpsertErr.message || '').includes('result_visibility'))
+      ) {
+        await supabase.from('polls').upsert([basePollRow]);
+      }
 
       // Upsert options preserving party in both party and subtitle
       const optionRowsWithParty = poll.candidates.map((c, idx) => ({

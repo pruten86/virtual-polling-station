@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Candidate, PollChannelData } from '../types';
+import { Candidate, PollChannelData, ResultVisibility, normalizeResultVisibility } from '../types';
 import { sounds } from '../sound';
 import {
   Award,
@@ -20,6 +20,8 @@ import {
   Download,
   ScrollText,
   Trophy,
+  Lock,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   BETA_DISCLAIMER_TEXT,
@@ -53,6 +55,7 @@ interface ResultsModalProps {
   isClosed?: boolean;
   expiresAt?: number | null;
   isPermanent?: boolean;
+  resultVisibility?: ResultVisibility;
   canClosePoll?: boolean;
   isLobbyDirectView?: boolean;
   onClosePollNow?: () => void | Promise<void>;
@@ -80,6 +83,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   isClosed = false,
   expiresAt = null,
   isPermanent = false,
+  resultVisibility = 'realtime',
   canClosePoll = false,
   isLobbyDirectView = false,
   onClosePollNow,
@@ -96,6 +100,8 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   onPostGuestbook,
   initialOpenOfficialDocs = false,
 }) => {
+  const isResultsSealed = normalizeResultVisibility(resultVisibility) === 'after_close' && !isClosed;
+
   // View mode for official polls: 'cumulative' or channel index number (1, 2, 3...)
   const [selectedChannelView, setSelectedChannelView] = useState<'cumulative' | number>('cumulative');
 
@@ -103,7 +109,9 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   const [liveCandidates, setLiveCandidates] = useState<Candidate[]>(candidates);
 
   // Official Winner Certificate & Final Results Announcement Sub-modal
-  const [isDocsModalOpen, setIsDocsModalOpen] = useState<boolean>(initialOpenOfficialDocs);
+  const [isDocsModalOpen, setIsDocsModalOpen] = useState<boolean>(
+    initialOpenOfficialDocs && !isResultsSealed
+  );
   const [docsTab, setDocsTab] = useState<'certificate' | 'announcement'>('certificate');
   const [previewDataUrl, setPreviewDataUrl] = useState<string>('');
   const [isGeneratingDoc, setIsGeneratingDoc] = useState<boolean>(false);
@@ -283,9 +291,9 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
   const sorted = [...displayedCandidates].sort((a, b) => b.votes - a.votes);
   const leading = sorted[0];
 
-  // Generate high-res 1080x1350 Canvas preview whenever official docs modal is open
+  // Generate high-res 1080x1350 Canvas preview whenever official docs modal is open (never while sealed)
   useEffect(() => {
-    if (!isDocsModalOpen) return;
+    if (!isDocsModalOpen || isResultsSealed) return;
     let cancelled = false;
     setIsGeneratingDoc(true);
 
@@ -316,7 +324,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isDocsModalOpen, docsTab, pollTitle, displayedCandidates, winnerSummary, isClosed, expiresAt, isPermanent]);
+  }, [isDocsModalOpen, isResultsSealed, docsTab, pollTitle, displayedCandidates, winnerSummary, isClosed, expiresAt, isPermanent]);
 
   const handleDownloadOfficialImage = async () => {
     sounds.playClick();
@@ -413,7 +421,13 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                 </span>
               )}
 
-              {/* Supabase Realtime Live Indicator */}
+              {isResultsSealed && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-200 text-[11px] font-extrabold">
+                  🔒 마감 후 공개
+                </span>
+              )}
+
+              {/* Realtime Live Indicator */}
               <span
                 className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
                   isRealtimeConnected
@@ -425,7 +439,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                 <Radio className="w-3 h-3" />
                 <span>
                   {isRealtimeConnected
-                    ? 'Supabase 실시간 연동 중'
+                    ? '실시간 연동 중'
                     : '실시간 로컬 동기화'}
                 </span>
               </span>
@@ -435,7 +449,14 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
               {pollTitle || '실시간 모의투표 개표 현황'}
             </h2>
             <p className="text-xs text-slate-400">
-              {isOfficial ? (
+              {isResultsSealed ? (
+                <>
+                  현재 참여 인원: <strong className="text-white">{totalVotes} / {maxVoters}명</strong>
+                  <span className="text-amber-300 ml-1.5 font-semibold">
+                    (후보별 득표 현황은 마감 후 일괄 공개)
+                  </span>
+                </>
+              ) : isOfficial ? (
                 <>
                   현재 조회 득표수: <strong className="text-white">{totalVotes}표</strong>
                   <span className="text-sky-300 ml-2 font-semibold">
@@ -456,201 +477,250 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
           </div>
         </div>
 
-        {/* Official 100-voter Channel Filter Selector */}
-        {isOfficial && allChannels.length > 0 && (
-          <div className="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl p-2.5">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-sky-400" />
-                <span>제N투표소 (100명 단위 실시간 분할)</span>
-              </span>
-              <span className="text-[10px] text-slate-400">
-                현재 활성: <strong className="text-sky-300">제{activeChannelIndex}투표소</strong>
-              </span>
+        {isResultsSealed ? (
+          /* Sealed Ballot Box View (Strictly hides candidate votes, percentages, rankings, and docs export before close) */
+          <div className="mb-5 rounded-2xl bg-gradient-to-b from-slate-800/95 via-slate-900/95 to-slate-950 border-2 border-amber-400/40 p-5 sm:p-6 text-center shadow-inner">
+            <div className="mx-auto w-16 h-16 rounded-2xl bg-amber-500/15 border-2 border-amber-400/50 flex items-center justify-center text-amber-300 mb-3 shadow-lg shadow-amber-950/40">
+              <Lock className="w-8 h-8" />
             </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  setSelectedChannelView('cumulative');
-                }}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer border ${
-                  selectedChannelView === 'cumulative'
-                    ? 'bg-sky-500 text-white border-sky-400 shadow-sm'
-                    : 'bg-slate-850 text-slate-300 border-slate-700 hover:border-slate-500'
-                }`}
-              >
-                전체 누적 개표 ({cumulativeTotal}표)
-              </button>
 
-              {allChannels.map((ch) => (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-200 text-[11px] font-extrabold mb-2">
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
+              <span>투표함 봉인 · 비밀 개표 정책 적용 중</span>
+            </div>
+
+            <h3 className="text-base sm:text-lg font-extrabold text-white whitespace-normal break-keep leading-snug mb-1.5">
+              🔒 비밀 개표 진행 중 — 마감 후 결과가 공개됩니다
+            </h3>
+            <p className="text-xs text-slate-300 whitespace-normal break-keep leading-relaxed max-w-md mx-auto mb-4">
+              공정한 의사결정을 위해 투표 마감 전까지 후보별 득표수, 득표율, 순위 및 1위 현황은 모두 비공개로 봉인됩니다.
+              마감 시각이 되거나 방장이 개표를 확정하면 즉시 전체 결과가 공개됩니다.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-md mx-auto text-left">
+              <div className="rounded-xl bg-slate-800/80 border border-slate-700/80 px-3.5 py-2.5">
+                <span className="block text-[10px] font-semibold text-slate-400 mb-0.5">
+                  현재 총 참여 인원
+                </span>
+                <span className="text-base sm:text-lg font-extrabold text-emerald-300 font-mono">
+                  {totalVotes}명
+                  <span className="text-xs text-slate-400 font-semibold ml-1">
+                    / 정원 {maxVoters}명
+                  </span>
+                </span>
+              </div>
+
+              <div className="rounded-xl bg-slate-800/80 border border-slate-700/80 px-3.5 py-2.5">
+                <span className="block text-[10px] font-semibold text-slate-400 mb-0.5">
+                  개표 결과 공개 예정 시각
+                </span>
+                <span className="text-xs sm:text-sm font-extrabold text-amber-300 block leading-snug">
+                  {expiresAt
+                    ? formatScheduledDeadlineKorean(expiresAt)
+                    : '방장 개표 확정 시 즉시 공개'}
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Official 100-voter Channel Filter Selector */}
+            {isOfficial && allChannels.length > 0 && (
+              <div className="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl p-2.5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-sky-400" />
+                    <span>제N투표소 (100명 단위 실시간 분할)</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    현재 활성: <strong className="text-sky-300">제{activeChannelIndex}투표소</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setSelectedChannelView('cumulative');
+                    }}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer border ${
+                      selectedChannelView === 'cumulative'
+                        ? 'bg-sky-500 text-white border-sky-400 shadow-sm'
+                        : 'bg-slate-850 text-slate-300 border-slate-700 hover:border-slate-500'
+                    }`}
+                  >
+                    전체 누적 개표 ({cumulativeTotal}표)
+                  </button>
+
+                  {allChannels.map((ch) => (
+                    <button
+                      key={ch.channelIndex}
+                      type="button"
+                      onClick={() => {
+                        sounds.playClick();
+                        setSelectedChannelView(ch.channelIndex);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer border ${
+                        selectedChannelView === ch.channelIndex
+                          ? 'bg-sky-500 text-white border-sky-400 shadow-sm'
+                          : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+                      }`}
+                    >
+                      제{ch.channelIndex}투표소 ({ch.totalVotes}/100명)
+                      {ch.channelIndex === activeChannelIndex && (
+                        <span className="ml-1 text-[10px] text-emerald-300 font-extrabold">• 진행중</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 1st Place / Final Result Banner + Official Certificate & Results Card Trigger */}
+            {isClosed && !winnerSummary.hasVotes ? (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-800/80 border border-slate-600/60 mb-4">
+                <div className="flex items-center gap-3">
+                  <Flag className="w-5 h-5 text-slate-400 shrink-0" />
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-200">최종 개표 결과: </span>
+                    <span className="font-extrabold text-slate-300 text-sm">투표 없음 (0표)</span>
+                  </div>
+                </div>
                 <button
-                  key={ch.channelIndex}
                   type="button"
                   onClick={() => {
                     sounds.playClick();
-                    setSelectedChannelView(ch.channelIndex);
+                    setDocsTab('announcement');
+                    setIsDocsModalOpen(true);
                   }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer border ${
-                    selectedChannelView === ch.channelIndex
-                      ? 'bg-sky-500 text-white border-sky-400 shadow-sm'
-                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
-                  }`}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-200 font-extrabold text-xs transition cursor-pointer shrink-0 active:scale-95"
                 >
-                  제{ch.channelIndex}투표소 ({ch.totalVotes}/100명)
-                  {ch.channelIndex === activeChannelIndex && (
-                    <span className="ml-1 text-[10px] text-emerald-300 font-extrabold">• 진행중</span>
-                  )}
+                  <Trophy className="w-3.5 h-3.5 text-amber-300" />
+                  <span>🏆 당선증 · 개표공고문 이미지 발급</span>
                 </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 1st Place / Final Result Banner + Official Certificate & Results Card Trigger */}
-        {isClosed && !winnerSummary.hasVotes ? (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-800/80 border border-slate-600/60 mb-4">
-            <div className="flex items-center gap-3">
-              <Flag className="w-5 h-5 text-slate-400 shrink-0" />
-              <div className="text-xs">
-                <span className="font-bold text-slate-200">최종 개표 결과: </span>
-                <span className="font-extrabold text-slate-300 text-sm">투표 없음 (0표)</span>
               </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                sounds.playClick();
-                setDocsTab('announcement');
-                setIsDocsModalOpen(true);
-              }}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-200 font-extrabold text-xs transition cursor-pointer shrink-0 active:scale-95"
-            >
-              <Trophy className="w-3.5 h-3.5 text-amber-300" />
-              <span>🏆 당선증 · 개표공고문 이미지 발급</span>
-            </button>
-          </div>
-        ) : leading && totalVotes > 0 ? (
-          <div
-            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border mb-4 ${
-              isClosed
-                ? 'bg-gradient-to-r from-emerald-500/20 via-amber-500/15 to-orange-500/15 border-emerald-400/50'
-                : 'bg-gradient-to-r from-amber-500/15 to-orange-500/15 border-amber-500/30'
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <Award className={`w-6 h-6 shrink-0 ${isClosed ? 'text-emerald-300' : 'text-amber-400'}`} />
-              <div className="text-xs min-w-0">
-                <span className={`font-bold ${isClosed ? 'text-emerald-300' : 'text-amber-300'}`}>
-                  {isClosed
-                    ? winnerSummary.isTie
-                      ? '🏆 최종 확정 결과 (공동 1위): '
-                      : '🏆 최종 확정 결과 (1위): '
-                    : winnerSummary.isTie
-                    ? '현재 공동 1위: '
-                    : '현재 1위 우세: '}
-                </span>
-                <span className="font-extrabold text-white text-sm">
-                  {winnerSummary.winners
-                    .map((w) => `[기호 ${w.symbolNumber}번] ${w.title}`)
-                    .join(' · ')}
-                </span>
-                <span className="text-amber-200 ml-1.5 font-semibold">
-                  ({winnerSummary.percent}%, {winnerSummary.maxVotes}표)
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                sounds.playClick();
-                setDocsTab('certificate');
-                setIsDocsModalOpen(true);
-              }}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs shadow-md shadow-amber-900/30 transition cursor-pointer shrink-0 active:scale-95"
-            >
-              <Trophy className="w-3.5 h-3.5" />
-              <span>🏆 당선증 · 개표공고문 이미지 발급</span>
-            </button>
-          </div>
-        ) : null}
-
-        {/* Real-time Dynamic Vote Bars (Responsive Grid for up to 10 candidates) */}
-        <div
-          className={`mb-5 max-h-[38vh] overflow-y-auto pr-1 ${
-            displayedCandidates.length > 5
-              ? 'grid grid-cols-1 sm:grid-cols-2 gap-2.5'
-              : 'space-y-2.5'
-          }`}
-        >
-          {displayedCandidates.map((candidate, idx) => {
-            const percent = totalVotes > 0 ? Math.round((candidate.votes / totalVotes) * 100) : 0;
-            const isUserChoice = userVoteId === candidate.id;
-
-            const barColors = [
-              'bg-gradient-to-r from-rose-500 to-pink-500',
-              'bg-gradient-to-r from-blue-500 to-indigo-500',
-              'bg-gradient-to-r from-emerald-500 to-teal-500',
-              'bg-gradient-to-r from-amber-500 to-yellow-500',
-              'bg-gradient-to-r from-purple-500 to-violet-500',
-              'bg-gradient-to-r from-cyan-500 to-blue-500',
-              'bg-gradient-to-r from-orange-500 to-amber-500',
-              'bg-gradient-to-r from-fuchsia-500 to-pink-500',
-              'bg-gradient-to-r from-teal-500 to-emerald-500',
-              'bg-gradient-to-r from-lime-500 to-green-500',
-            ];
-
-            const isCompact = displayedCandidates.length > 5;
-
-            return (
+            ) : leading && totalVotes > 0 ? (
               <div
-                key={candidate.id}
-                className={`${isCompact ? 'p-2 sm:p-2.5' : 'p-3'} rounded-xl border transition-all ${
-                  isUserChoice
-                    ? 'bg-slate-800/90 border-sky-400/60 ring-1 ring-sky-400/40'
-                    : 'bg-slate-800/40 border-slate-700/60'
+                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border mb-4 ${
+                  isClosed
+                    ? 'bg-gradient-to-r from-emerald-500/20 via-amber-500/15 to-orange-500/15 border-emerald-400/50'
+                    : 'bg-gradient-to-r from-amber-500/15 to-orange-500/15 border-amber-500/30'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1.5 gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="w-5 h-5 rounded-md bg-slate-700 flex items-center justify-center text-xs font-bold text-white shrink-0">
-                      {candidate.symbolNumber}
+                <div className="flex items-center gap-3 min-w-0">
+                  <Award className={`w-6 h-6 shrink-0 ${isClosed ? 'text-emerald-300' : 'text-amber-400'}`} />
+                  <div className="text-xs min-w-0">
+                    <span className={`font-bold ${isClosed ? 'text-emerald-300' : 'text-amber-300'}`}>
+                      {isClosed
+                        ? winnerSummary.isTie
+                          ? '🏆 최종 확정 결과 (공동 1위): '
+                          : '🏆 최종 확정 결과 (1위): '
+                        : winnerSummary.isTie
+                        ? '현재 공동 1위: '
+                        : '현재 1위 우세: '}
                     </span>
-                    <div className="min-w-0">
-                      <span className="text-xs sm:text-sm font-bold text-white whitespace-normal break-keep break-words leading-snug block">
-                        {candidate.title}
-                      </span>
-                      <span className="text-[10px] sm:text-xs text-slate-400 whitespace-normal break-keep break-words leading-snug block">
-                        ({candidate.party})
-                      </span>
-                    </div>
-                    {isUserChoice && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/30 shrink-0">
-                        <CheckCircle2 className="w-2.5 h-2.5" /> 내 투표
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-sm sm:text-base font-extrabold text-white font-mono">{percent}%</span>
-                    <span className="text-[10px] sm:text-xs text-slate-400 ml-1">({candidate.votes}표)</span>
+                    <span className="font-extrabold text-white text-sm">
+                      {winnerSummary.winners
+                        .map((w) => `[기호 ${w.symbolNumber}번] ${w.title}`)
+                        .join(' · ')}
+                    </span>
+                    <span className="text-amber-200 ml-1.5 font-semibold">
+                      ({winnerSummary.percent}%, {winnerSummary.maxVotes}표)
+                    </span>
                   </div>
                 </div>
 
-                {/* Progress Track */}
-                <div className="w-full h-2 rounded-full bg-slate-700/70 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-700 ease-out ${
-                      barColors[idx % barColors.length]
-                    }`}
-                    style={{ width: `${Math.max(2, percent)}%` }}
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setDocsTab('certificate');
+                    setIsDocsModalOpen(true);
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs shadow-md shadow-amber-900/30 transition cursor-pointer shrink-0 active:scale-95"
+                >
+                  <Trophy className="w-3.5 h-3.5" />
+                  <span>🏆 당선증 · 개표공고문 이미지 발급</span>
+                </button>
               </div>
-            );
-          })}
-        </div>
+            ) : null}
+
+            {/* Real-time Dynamic Vote Bars (Responsive Grid for up to 10 candidates) */}
+            <div
+              className={`mb-5 max-h-[38vh] overflow-y-auto pr-1 ${
+                displayedCandidates.length > 5
+                  ? 'grid grid-cols-1 sm:grid-cols-2 gap-2.5'
+                  : 'space-y-2.5'
+              }`}
+            >
+              {displayedCandidates.map((candidate, idx) => {
+                const percent = totalVotes > 0 ? Math.round((candidate.votes / totalVotes) * 100) : 0;
+                const isUserChoice = userVoteId === candidate.id;
+
+                const barColors = [
+                  'bg-gradient-to-r from-rose-500 to-pink-500',
+                  'bg-gradient-to-r from-blue-500 to-indigo-500',
+                  'bg-gradient-to-r from-emerald-500 to-teal-500',
+                  'bg-gradient-to-r from-amber-500 to-yellow-500',
+                  'bg-gradient-to-r from-purple-500 to-violet-500',
+                  'bg-gradient-to-r from-cyan-500 to-blue-500',
+                  'bg-gradient-to-r from-orange-500 to-amber-500',
+                  'bg-gradient-to-r from-fuchsia-500 to-pink-500',
+                  'bg-gradient-to-r from-teal-500 to-emerald-500',
+                  'bg-gradient-to-r from-lime-500 to-green-500',
+                ];
+
+                const isCompact = displayedCandidates.length > 5;
+
+                return (
+                  <div
+                    key={candidate.id}
+                    className={`${isCompact ? 'p-2 sm:p-2.5' : 'p-3'} rounded-xl border transition-all ${
+                      isUserChoice
+                        ? 'bg-slate-800/90 border-sky-400/60 ring-1 ring-sky-400/40'
+                        : 'bg-slate-800/40 border-slate-700/60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5 gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-5 h-5 rounded-md bg-slate-700 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                          {candidate.symbolNumber}
+                        </span>
+                        <div className="min-w-0">
+                          <span className="text-xs sm:text-sm font-bold text-white whitespace-normal break-keep break-words leading-snug block">
+                            {candidate.title}
+                          </span>
+                          <span className="text-[10px] sm:text-xs text-slate-400 whitespace-normal break-keep break-words leading-snug block">
+                            ({candidate.party})
+                          </span>
+                        </div>
+                        {isUserChoice && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/30 shrink-0">
+                            <CheckCircle2 className="w-2.5 h-2.5" /> 내 투표
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-sm sm:text-base font-extrabold text-white font-mono">{percent}%</span>
+                        <span className="text-[10px] sm:text-xs text-slate-400 ml-1">({candidate.votes}표)</span>
+                      </div>
+                    </div>
+
+                    {/* Progress Track */}
+                    <div className="w-full h-2 rounded-full bg-slate-700/70 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-700 ease-out ${
+                          barColors[idx % barColors.length]
+                        }`}
+                        style={{ width: `${Math.max(2, percent)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
 
         {/* 💬 Voter Guestbook (유권자 한마디 & 실시간 응원 방명록) */}
         <div className="mb-5 bg-slate-850 border border-slate-700/80 rounded-xl p-3.5">
@@ -842,7 +912,7 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
       </div>
 
       {/* Official Winner Certificate & Final Results Announcement PNG Export Modal */}
-      {isDocsModalOpen && (
+      {isDocsModalOpen && !isResultsSealed && (
         <div
           onClick={() => {
             sounds.playClick();

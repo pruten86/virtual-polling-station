@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StationZone } from '../types';
+import { StationZone, ResultVisibility, normalizeResultVisibility } from '../types';
 import { EmoteId } from '../scene/avatar';
 import {
   formatClosedDateTimeKorean,
@@ -44,6 +44,7 @@ interface CollapsibleHUDProps {
   isOfficial?: boolean;
   isPermanent?: boolean;
   expiresAt?: number;
+  resultVisibility?: ResultVisibility;
   activeChannelIndex?: number;
   channelVotes?: number;
   cumulativeVotes?: number;
@@ -81,6 +82,7 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
   isOfficial,
   isPermanent = false,
   expiresAt,
+  resultVisibility = 'realtime',
   activeChannelIndex = 1,
   channelVotes = 0,
   cumulativeVotes = 0,
@@ -322,6 +324,11 @@ export const CollapsibleHUD: React.FC<CollapsibleHUDProps> = ({
                     {!isPermanent && !isClosed && expiresAt && (
                       <span className="inline-block ml-1.5 px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-400/35 text-amber-200 text-[9.5px] sm:text-[10px] font-semibold whitespace-nowrap align-middle">
                         🕒 {formatScheduledDeadlineKorean(expiresAt)}
+                      </span>
+                    )}
+                    {normalizeResultVisibility(resultVisibility) === 'after_close' && !isClosed && (
+                      <span className="inline-block ml-1.5 px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-400/50 text-amber-200 text-[9.5px] sm:text-[10px] font-extrabold whitespace-nowrap align-middle">
+                        🔒 마감 후 공개
                       </span>
                     )}
                   </span>

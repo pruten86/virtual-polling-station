@@ -15,7 +15,8 @@ export interface EnvironmentResult {
     results: { id: string; title: string; votes: number; percent: number }[],
     totalVotes: number,
     pollTitle?: string,
-    isClosed?: boolean
+    isClosed?: boolean,
+    options?: { hideResults?: boolean; scheduledDeadlineText?: string }
   ) => void;
   updateBeaconActive: (currentStep: number) => void;
   updateBannerTitle: (title: string, sub?: string) => void;
@@ -284,7 +285,7 @@ function createSignTexture(title: string, sub: string, bgColor = '#5DAE74'): THR
 
   ctx.fillStyle = '#8C7A6B';
   ctx.font = '600 20px "Pretendard", "Noto Sans KR", sans-serif';
-  ctx.fillText('보트버스 가상선거관리위원회', 256, 208);
+  ctx.fillText('보트버스 선거관리위원회', 256, 208);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -782,8 +783,8 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     bannerCtx.fillStyle = '#DC5A5A';
     bannerCtx.font = 'bold 24px "Pretendard", sans-serif';
     bannerCtx.textAlign = 'center';
-    bannerCtx.fillText('모의선거', 1086, 100);
-    bannerCtx.fillText('관리위원회', 1086, 136);
+    bannerCtx.fillText('보트버스', 1086, 100);
+    bannerCtx.fillText('선관위인', 1086, 136);
 
     bannerTexture.needsUpdate = true;
   };
@@ -1520,14 +1521,17 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     results: { id: string; title: string; votes: number; percent: number }[],
     totalVotes: number,
     pollTitle?: string,
-    isClosed = false
+    isClosed = false,
+    options?: { hideResults?: boolean; scheduledDeadlineText?: string }
   ) => {
+    const isSealed = Boolean(options?.hideResults && !isClosed);
+
     // Deep warm navy display backdrop
     bCtx.fillStyle = '#1B253E';
     bCtx.fillRect(0, 0, 1024, 640);
 
     // Soft rounded inner frame glow
-    bCtx.strokeStyle = 'rgba(182, 206, 240, 0.18)';
+    bCtx.strokeStyle = isSealed ? 'rgba(246, 198, 103, 0.34)' : 'rgba(182, 206, 240, 0.18)';
     bCtx.lineWidth = 4;
     bCtx.beginPath();
     bCtx.roundRect(18, 18, 988, 604, 24);
@@ -1556,11 +1560,19 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     const headerTitle = pollTitle ? pollTitle : '실시간 개표 현황 (LIVE TALLY)';
     bCtx.fillText(headerTitle.length > 24 ? headerTitle.slice(0, 24) + '...' : headerTitle, 80, 56);
 
-    bCtx.fillStyle = isClosed ? '#7AD3A4' : '#C7D6EE';
+    bCtx.fillStyle = isClosed ? '#7AD3A4' : isSealed ? '#F6C667' : '#C7D6EE';
     bCtx.font = '600 22px "Pretendard", "Noto Sans KR", sans-serif';
     bCtx.textAlign = 'right';
-    const statusLabel = isClosed ? '개표 완료 (100%)' : '실시간 집계 중';
-    bCtx.fillText(`총 투표: ${totalVotes}표  |  ${statusLabel}`, 972, 56);
+    const statusLabel = isClosed
+      ? '개표 완료 (100%)'
+      : isSealed
+      ? '🔒 비밀 개표 진행 중'
+      : '실시간 집계 중';
+    bCtx.fillText(
+      isSealed ? `총 참여: ${totalVotes}명  |  ${statusLabel}` : `총 투표: ${totalVotes}표  |  ${statusLabel}`,
+      972,
+      56
+    );
 
     // Warm navy divider
     bCtx.strokeStyle = 'rgba(205, 222, 248, 0.18)';
@@ -1569,6 +1581,97 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     bCtx.moveTo(44, 88);
     bCtx.lineTo(980, 88);
     bCtx.stroke();
+
+    // Sealed Mode (after_close before deadline): Never render candidate bars, counts, or percentages
+    if (isSealed) {
+      bCtx.fillStyle = 'rgba(34, 47, 79, 0.92)';
+      bCtx.beginPath();
+      bCtx.roundRect(72, 124, 880, 452, 26);
+      bCtx.fill();
+
+      bCtx.strokeStyle = 'rgba(246, 198, 103, 0.45)';
+      bCtx.lineWidth = 3;
+      bCtx.stroke();
+
+      // Padlock badge circle
+      bCtx.fillStyle = 'rgba(246, 198, 103, 0.16)';
+      bCtx.beginPath();
+      bCtx.arc(512, 206, 48, 0, Math.PI * 2);
+      bCtx.fill();
+      bCtx.strokeStyle = '#F6C667';
+      bCtx.lineWidth = 3;
+      bCtx.stroke();
+
+      // Padlock shackle & body
+      bCtx.strokeStyle = '#F6C667';
+      bCtx.lineWidth = 6;
+      bCtx.beginPath();
+      bCtx.arc(512, 196, 15, Math.PI, 0, false);
+      bCtx.stroke();
+      bCtx.fillStyle = '#F6C667';
+      bCtx.beginPath();
+      bCtx.roundRect(490, 198, 44, 34, 7);
+      bCtx.fill();
+      bCtx.fillStyle = '#1B253E';
+      bCtx.beginPath();
+      bCtx.arc(512, 214, 5, 0, Math.PI * 2);
+      bCtx.fill();
+
+      // Main sealed headline
+      bCtx.textAlign = 'center';
+      bCtx.textBaseline = 'middle';
+      bCtx.fillStyle = '#FFF7EB';
+      bCtx.font = 'bold 42px "Pretendard", "Noto Sans KR", sans-serif';
+      bCtx.fillText('🔒 마감 후 개표 결과 공개', 512, 294);
+
+      bCtx.fillStyle = '#C7D6EE';
+      bCtx.font = '600 22px "Pretendard", "Noto Sans KR", sans-serif';
+      bCtx.fillText('투표 마감 전까지 후보별 득표수와 순위는 비밀로 봉인됩니다', 512, 344);
+
+      // Two clean info pills: Current total participants + Scheduled deadline
+      bCtx.fillStyle = 'rgba(20, 30, 52, 0.92)';
+      bCtx.beginPath();
+      bCtx.roundRect(114, 392, 360, 114, 18);
+      bCtx.fill();
+      bCtx.strokeStyle = 'rgba(122, 211, 164, 0.35)';
+      bCtx.lineWidth = 2;
+      bCtx.stroke();
+
+      bCtx.fillStyle = '#9FB3D4';
+      bCtx.font = '600 19px "Pretendard", "Noto Sans KR", sans-serif';
+      bCtx.fillText('현재 총 참여 인원', 294, 426);
+      bCtx.fillStyle = '#7AD3A4';
+      bCtx.font = 'bold 34px "Pretendard", "Noto Sans KR", sans-serif';
+      bCtx.fillText(`${totalVotes}명 참여 중`, 294, 470);
+
+      bCtx.fillStyle = 'rgba(20, 30, 52, 0.92)';
+      bCtx.beginPath();
+      bCtx.roundRect(510, 392, 400, 114, 18);
+      bCtx.fill();
+      bCtx.strokeStyle = 'rgba(246, 198, 103, 0.35)';
+      bCtx.lineWidth = 2;
+      bCtx.stroke();
+
+      bCtx.fillStyle = '#9FB3D4';
+      bCtx.font = '600 19px "Pretendard", "Noto Sans KR", sans-serif';
+      bCtx.fillText('개표 공개 예정 시각', 710, 426);
+      bCtx.fillStyle = '#F6C667';
+      bCtx.font = 'bold 24px "Pretendard", "Noto Sans KR", sans-serif';
+      const deadlineLabel = options?.scheduledDeadlineText || '방장 개표 확정 시 공개';
+      bCtx.fillText(
+        deadlineLabel.length > 22 ? deadlineLabel.slice(0, 22) + '...' : deadlineLabel,
+        710,
+        470
+      );
+
+      // Commission footer note
+      bCtx.fillStyle = '#8FA6CC';
+      bCtx.font = '600 18px "Pretendard", "Noto Sans KR", sans-serif';
+      bCtx.fillText('보트버스 선거관리위원회 · 4번 전광판에서 방명록은 상시 이용 가능합니다', 512, 544);
+
+      boardTexture.needsUpdate = true;
+      return;
+    }
 
     // Vivid Pastel Bar Graph Palette (pops clearly on deep navy)
     const pastelBars = ['#F48B94', '#7EB8F0', '#7AD3A4', '#F5CA73', '#BCA2F2'];

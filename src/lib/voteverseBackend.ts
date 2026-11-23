@@ -23,7 +23,7 @@ export function getMultiplayerSessionId(): string {
   }
   return getSupabaseMultiplayerSessionId();
 }
-import { AvatarType, normalizeAvatarType, PollStation, Candidate, PollChannelData } from '../types';
+import { AvatarType, normalizeAvatarType, PollStation, Candidate, PollChannelData, normalizeResultVisibility } from '../types';
 import {
   PRESET_POLLS,
   getAllPolls,
@@ -445,7 +445,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
 
     const fullColsRes = await supabase
       .from('polls')
-      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, owner_id, access_code')
+      .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, owner_id, access_code, result_visibility')
       .neq('category', 'private')
       .order('created_at', { ascending: false });
 
@@ -453,16 +453,34 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       fullColsRes.error &&
       (fullColsRes.error.code === '42703' ||
         fullColsRes.error.code === 'PGRST204' ||
+        (fullColsRes.error.message || '').includes('result_visibility') ||
         (fullColsRes.error.message || '').includes('owner_id') ||
         (fullColsRes.error.message || '').includes('access_code'))
     ) {
-      const baseRes = await supabase
+      const midRes = await supabase
         .from('polls')
-        .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
+        .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at, owner_id, access_code')
         .neq('category', 'private')
         .order('created_at', { ascending: false });
-      pollsData = baseRes.data;
-      pollsError = baseRes.error;
+
+      if (
+        midRes.error &&
+        (midRes.error.code === '42703' ||
+          midRes.error.code === 'PGRST204' ||
+          (midRes.error.message || '').includes('owner_id') ||
+          (midRes.error.message || '').includes('access_code'))
+      ) {
+        const baseRes = await supabase
+          .from('polls')
+          .select('id, title, description, category, max_voters, duration_hours, expires_at, created_at')
+          .neq('category', 'private')
+          .order('created_at', { ascending: false });
+        pollsData = baseRes.data;
+        pollsError = baseRes.error;
+      } else {
+        pollsData = midRes.data;
+        pollsError = midRes.error;
+      }
     } else {
       pollsData = fullColsRes.data;
       pollsError = fullColsRes.error;
@@ -536,6 +554,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
           ...presetMatch,
           isPermanent: permanent,
           expiresAt: permanent ? undefined : presetMatch.expiresAt,
+          resultVisibility: 'realtime',
           candidates: mergeOfficialPresetCandidates(presetMatch, rawOptionsMap[pollIdStr] || []),
         };
       }
@@ -556,6 +575,9 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
         isCustom: !isOfficial,
         durationHours: Number(row.duration_hours) || 24,
         expiresAt: effectiveExpiresAt,
+        resultVisibility: normalizeResultVisibility(
+          row.result_visibility ?? localMatch?.resultVisibility
+        ),
         ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
         adminPin: localMatch?.adminPin,
         accessCode: row.access_code ? String(row.access_code) : localMatch?.accessCode,
@@ -614,6 +636,7 @@ function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
       ...presetMatch,
       isPermanent: permanent,
       expiresAt: permanent ? undefined : presetMatch.expiresAt,
+      resultVisibility: 'realtime',
       candidates: mergeOfficialPresetCandidates(presetMatch, optionRows),
     };
   }
@@ -654,6 +677,9 @@ function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
     isCustom: !isOfficial,
     durationHours: Number(row.duration_hours) || 24,
     expiresAt: effectiveExpiresAt,
+    resultVisibility: normalizeResultVisibility(
+      row.result_visibility ?? localMatch?.resultVisibility
+    ),
     ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
     adminPin: row.admin_pin ? String(row.admin_pin) : localMatch?.adminPin,
     accessCode: row.access_code ? String(row.access_code) : localMatch?.accessCode,
@@ -791,7 +817,7 @@ export async function fetchPollTalliesFromDB(
  */
 export async function createVoteversePoll(pollData: PollStation): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured || !supabase) {
-    return { success: false, error: 'Supabase 데이터베이스가 연결되어 있지 않습니다.' };
+    return { success: false, error: '실시간 데이터베이스가 연결되어 있지 않습니다.' };
   }
 
   // Best-effort anonymous auth (do not block creation if anonymous auth is delayed/disabled)
@@ -815,6 +841,7 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
     vote_count: c.votes || 0,
   }));
 
+  const resolvedVisibility = normalizeResultVisibility(pollWithOwner.resultVisibility);
   const p_poll_payload: Record<string, any> = {
     id: pollWithOwner.id,
     title: pollWithOwner.title,
@@ -823,6 +850,7 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
     max_voters: pollWithOwner.maxVoters,
     duration_hours: Math.max(1, Math.round(pollWithOwner.durationHours || 24)),
     expires_at: pollWithOwner.expiresAt ? new Date(pollWithOwner.expiresAt).toISOString() : null,
+    result_visibility: resolvedVisibility,
     owner_id: resolvedOwnerId,
     candidates: optionRowsWithParty.map(({ poll_id: _pid, ...rest }) => rest),
   };
@@ -871,6 +899,7 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
 
       const extendedRow: Record<string, any> = {
         ...baseRow,
+        result_visibility: resolvedVisibility,
         owner_id: resolvedOwnerId,
         ...(pollWithOwner.accessCode ? { access_code: pollWithOwner.accessCode } : {}),
         ...(pollWithOwner.adminPin ? { admin_pin: pollWithOwner.adminPin } : {}),
@@ -881,16 +910,25 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
         pollError &&
         (pollError.code === '42703' ||
           pollError.code === 'PGRST204' ||
+          (pollError.message || '').includes('result_visibility') ||
           (pollError.message || '').includes('owner_id') ||
           (pollError.message || '').includes('access_code') ||
           (pollError.message || '').includes('admin_pin'))
       ) {
         // Retry stripping any optional metadata column that may not exist on older DB schema
-        const withAccessOnly: Record<string, any> = {
+        const withVisibilityOnly: Record<string, any> = {
           ...baseRow,
+          result_visibility: resolvedVisibility,
           ...(pollWithOwner.accessCode ? { access_code: pollWithOwner.accessCode } : {}),
         };
-        pollError = (await supabase.from('polls').upsert([withAccessOnly])).error;
+        pollError = (await supabase.from('polls').upsert([withVisibilityOnly])).error;
+        if (pollError) {
+          const withAccessOnly: Record<string, any> = {
+            ...baseRow,
+            ...(pollWithOwner.accessCode ? { access_code: pollWithOwner.accessCode } : {}),
+          };
+          pollError = (await supabase.from('polls').upsert([withAccessOnly])).error;
+        }
         if (pollError) {
           pollError = (await supabase.from('polls').upsert([baseRow])).error;
         }
@@ -1249,7 +1287,7 @@ export async function castVote(
   if (!isSupabaseConfigured || !supabase) {
     return {
       success: false,
-      message: 'Supabase 데이터베이스가 연결되지 않아 투표를 기록할 수 없습니다.',
+      message: '실시간 데이터베이스가 연결되지 않아 투표를 기록할 수 없습니다.',
     };
   }
 
@@ -2079,7 +2117,7 @@ export async function postGuestbookMessage(
   }
 
   if (!isSupabaseConfigured || !supabase) {
-    return { success: false, error: 'Supabase DB가 연결되어 있지 않습니다.' };
+    return { success: false, error: '실시간 데이터베이스가 연결되어 있지 않습니다.' };
   }
 
   try {

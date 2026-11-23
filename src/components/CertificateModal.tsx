@@ -206,12 +206,12 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
     ctx.fillText(dateStr, 600, 1180);
 
     // Authority Title
-    ctx.font = 'bold 40px "Song Myung", serif';
+    ctx.font = 'bold 42px "Song Myung", serif';
     ctx.fillStyle = '#0c4a6e';
-    ctx.fillText('보트버스(VOTEVERSE) 중앙일상선거관리위원회', 515, 1290);
+    ctx.fillText('보트버스(VOTEVERSE) 선거관리위원회', 530, 1290);
 
     // Red Official Seal Stamp (도장)
-    const sealX = 995;
+    const sealX = 965;
     const sealY = 1290;
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 8;
@@ -341,7 +341,7 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
               {/* Authority & Seal */}
               <div className="flex items-center justify-center gap-2.5 pt-1 flex-wrap">
                 <span className="text-[11px] sm:text-xs font-bold text-sky-950 tracking-wide font-cert">
-                  보트버스(VOTEVERSE) 중앙일상선거관리위원회
+                  보트버스(VOTEVERSE) 선거관리위원회
                 </span>
                 <div className="w-9 h-9 sm:w-10 sm:h-10 border-2 border-red-600 text-red-600 flex flex-col items-center justify-center text-[7px] sm:text-[8px] font-bold leading-tight font-serif rounded-xs shadow-xs shrink-0">
                   <span>보트버스</span>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { PollStation, Candidate } from '../types';
+import { PollStation, Candidate, ResultVisibility } from '../types';
 import { sounds } from '../sound';
 import { checkPoliticalContent } from '../data/presetPolls';
 import { createVoteversePoll, ensureAnonymousAuth } from '../lib/voteverseBackend';
@@ -20,6 +20,8 @@ import {
   AlertTriangle,
   Sparkles,
   Wand2,
+  BarChart3,
+  Lock,
 } from 'lucide-react';
 
 export const DURATION_OPTIONS = [
@@ -299,6 +301,86 @@ export const PollDurationSelector: React.FC<PollDurationSelectorProps> = ({
   );
 };
 
+export interface ResultVisibilitySelectorProps {
+  value: ResultVisibility;
+  onChange: (next: ResultVisibility) => void;
+}
+
+export const ResultVisibilitySelector: React.FC<ResultVisibilitySelectorProps> = ({
+  value,
+  onChange,
+}) => {
+  return (
+    <div className="bg-slate-900/60 border border-slate-700/70 rounded-lg p-2.5 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+          <BarChart3 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+          <span>개표 결과 공개 시점</span>
+        </label>
+        <span className="text-[10px] font-bold text-sky-300">
+          {value === 'after_close' ? '🔒 마감 후 일괄 공개' : '📊 실시간 즉시 공개'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            sounds.playClick();
+            onChange('realtime');
+          }}
+          className={`p-2.5 rounded-lg border text-left transition cursor-pointer flex items-start gap-2 ${
+            value === 'realtime'
+              ? 'bg-sky-500/20 border-sky-400 ring-1 ring-sky-400/40 text-white shadow-sm'
+              : 'bg-slate-800/70 border-slate-700 text-slate-300 hover:border-slate-500'
+          }`}
+        >
+          <BarChart3
+            className={`w-4 h-4 shrink-0 mt-0.5 ${
+              value === 'realtime' ? 'text-sky-300' : 'text-slate-400'
+            }`}
+          />
+          <div className="min-w-0 space-y-0.5">
+            <span className="block text-[11px] font-extrabold leading-snug">
+              📊 실시간 공개 (기본)
+            </span>
+            <span className="block text-[10px] text-slate-400 leading-snug">
+              투표 진행 중에도 전광판과 로비에서 실시간 득표 현황을 볼 수 있습니다.
+            </span>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            sounds.playClick();
+            onChange('after_close');
+          }}
+          className={`p-2.5 rounded-lg border text-left transition cursor-pointer flex items-start gap-2 ${
+            value === 'after_close'
+              ? 'bg-amber-500/20 border-amber-400 ring-1 ring-amber-400/40 text-white shadow-sm'
+              : 'bg-slate-800/70 border-slate-700 text-slate-300 hover:border-slate-500'
+          }`}
+        >
+          <Lock
+            className={`w-4 h-4 shrink-0 mt-0.5 ${
+              value === 'after_close' ? 'text-amber-300' : 'text-slate-400'
+            }`}
+          />
+          <div className="min-w-0 space-y-0.5">
+            <span className="block text-[11px] font-extrabold leading-snug">
+              🔒 투표 마감 후 공개
+            </span>
+            <span className="block text-[10px] text-slate-400 leading-snug">
+              마감 전까지 후보별 득표수·순위를 비밀로 유지하고 마감 확정 시 공개합니다.
+            </span>
+          </div>
+        </button>
+      </div>
+    </div>
+  );
+};
+
 interface DraftChoice {
   title: string;
   party: string;
@@ -322,6 +404,7 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
   const [newAdminPin, setNewAdminPin] = useState('');
   const [newMaxVoters, setNewMaxVoters] = useState<number>(100);
   const [selectedDurationHours, setSelectedDurationHours] = useState<number>(24);
+  const [resultVisibility, setResultVisibility] = useState<ResultVisibility>('realtime');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -521,6 +604,7 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
         isCustom: true,
         durationHours: selectedDurationHours,
         expiresAt,
+        resultVisibility,
       };
 
       const res = await createVoteversePoll(createdPoll);
@@ -539,6 +623,7 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
       setNewAdminPin('');
       setNewMaxVoters(100);
       setSelectedDurationHours(24);
+      setResultVisibility('realtime');
       setNewChoices([
         { title: '', party: '', subtitle: '' },
         { title: '', party: '', subtitle: '' },
@@ -863,6 +948,12 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
       <PollDurationSelector
         durationHours={selectedDurationHours}
         onChange={setSelectedDurationHours}
+      />
+
+      {/* 4. Result Visibility Selection (Realtime vs After Close) */}
+      <ResultVisibilitySelector
+        value={resultVisibility}
+        onChange={setResultVisibility}
       />
 
       {/* Private Code Option Toggle */}
