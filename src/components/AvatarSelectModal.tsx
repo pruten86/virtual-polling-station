@@ -770,11 +770,28 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         </p>
                       </div>
 
-                      {/* Photo Poll Full Preview Grid (All candidates: 4x2 on mobile, 8x1 on desktop) */}
+                      {/* Photo Poll Full Preview Grid (4-item polls: balanced 4x1, 8-item polls: 4x2 mobile / 8x1 desktop) */}
                       {isPhotoPollCandidates(poll.candidates) && (
-                        <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 pt-1">
+                        <div
+                          className={
+                            poll.candidates.length <= 4
+                              ? 'grid grid-cols-4 gap-2 pt-1'
+                              : 'grid grid-cols-4 sm:grid-cols-8 gap-1.5 pt-1'
+                          }
+                        >
                           {poll.candidates.map((cand) => {
-                            const shortLabel = cand.title.split('(')[0].trim() || cand.title;
+                            const getShortLabel = (title: string): string => {
+                              if (title.includes('김치찌개')) return '김치찌개';
+                              if (title.includes('돈가스') || title.includes('돈까스')) return '돈가스';
+                              if (title.includes('연어') && title.includes('포케')) return '연어포케';
+                              if (title.includes('국밥')) return '국밥';
+                              if (title.includes('삼겹살')) return '삼겹살';
+                              if (title.includes('치킨') || title.includes('치맥')) return '치맥';
+                              if (title.includes('모듬회')) return '모듬회';
+                              if (title.includes('스테이크')) return '스테이크';
+                              return title.split('(')[0].trim() || title;
+                            };
+                            const shortLabel = getShortLabel(cand.title);
                             return (
                               <div
                                 key={cand.id}
@@ -785,7 +802,13 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                   candidate={cand}
                                   className="aspect-square w-full rounded-lg overflow-hidden border border-slate-600/80"
                                 />
-                                <span className="text-[9.5px] sm:text-[10px] font-semibold text-slate-300 leading-tight text-center whitespace-normal break-keep w-full">
+                                <span
+                                  className={`${
+                                    poll.candidates.length <= 4
+                                      ? 'text-[10.5px] sm:text-xs font-bold text-slate-200'
+                                      : 'text-[9.5px] sm:text-[10px] font-semibold text-slate-300'
+                                  } leading-tight text-center whitespace-normal break-keep w-full`}
+                                >
                                   {shortLabel}
                                 </span>
                               </div>

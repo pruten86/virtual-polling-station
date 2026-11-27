@@ -955,14 +955,16 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
 
       const list = candidates.slice(0, 10);
       const count = Math.max(1, list.length);
-      const rows = count <= 4 ? 1 : 2;
-      const cols = rows === 1 ? Math.max(2, count) : Math.ceil(count / 2);
+      const anyHasImg = list.some((c) => hasCandidateImage(c));
+      const isFourPhotoGrid = count === 4 && anyHasImg;
+      const rows = isFourPhotoGrid ? 2 : count <= 4 ? 1 : 2;
+      const cols = isFourPhotoGrid ? 2 : rows === 1 ? Math.max(2, count) : Math.ceil(count / 2);
 
       const padX = 32;
       const topY = 114;
       const bottomPad = 26;
-      const gapX = 16;
-      const gapY = 16;
+      const gapX = isFourPhotoGrid ? 20 : 16;
+      const gapY = isFourPhotoGrid ? 18 : 16;
       const availW = W - padX * 2;
       const availH = H - topY - bottomPad;
       const cardW = (availW - gapX * (cols - 1)) / cols;
@@ -1007,7 +1009,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
         posterCtx.stroke();
 
         // Colored top ribbon bar
-        const ribbonH = rows === 1 ? 56 : 42;
+        const ribbonH = isFourPhotoGrid ? 48 : rows === 1 ? 56 : 42;
         posterCtx.save();
         posterCtx.beginPath();
         posterCtx.roundRect(x, y, cardW, ribbonH, [16, 16, 0, 0]);
@@ -1019,18 +1021,94 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
         posterCtx.fillStyle = '#FFFFFF';
         posterCtx.textAlign = 'left';
         posterCtx.textBaseline = 'middle';
-        posterCtx.font = `900 ${rows === 1 ? 24 : 21}px "Pretendard", "Noto Sans KR", sans-serif`;
-        posterCtx.fillText(`기호 ${cand.symbolNumber}`, x + 14, y + ribbonH / 2 + 1);
+        posterCtx.font = `900 ${isFourPhotoGrid ? 24 : rows === 1 ? 24 : 21}px "Pretendard", "Noto Sans KR", sans-serif`;
+        posterCtx.fillText(`기호 ${cand.symbolNumber}`, x + 16, y + ribbonH / 2 + 1);
 
-        posterCtx.fillStyle = 'rgba(255,255,255,0.92)';
+        posterCtx.fillStyle = 'rgba(255,255,255,0.94)';
         posterCtx.textAlign = 'right';
-        posterCtx.font = `700 ${rows === 1 ? 18 : 15}px "Pretendard", "Noto Sans KR", sans-serif`;
+        posterCtx.font = `700 ${isFourPhotoGrid ? 18 : rows === 1 ? 18 : 15}px "Pretendard", "Noto Sans KR", sans-serif`;
         const shortParty =
-          cand.party.length > 9 ? `${cand.party.slice(0, 9)}…` : cand.party;
-        posterCtx.fillText(shortParty, x + cardW - 14, y + ribbonH / 2 + 1);
+          cand.party.length > (isFourPhotoGrid ? 14 : 9)
+            ? `${cand.party.slice(0, isFourPhotoGrid ? 14 : 9)}…`
+            : cand.party;
+        posterCtx.fillText(shortParty, x + cardW - 16, y + ribbonH / 2 + 1);
 
-        if (hasImg) {
-          // Photo poster area
+        if (hasImg && isFourPhotoGrid) {
+          // 2x2 Large Horizontal Photo Card: Crisp 1:1 square photo on left + bold Korean title & pledge on right
+          const bodyY = y + ribbonH;
+          const bodyH = cardH - ribbonH;
+          const imgSize = Math.min(bodyH - 28, 224);
+          const imgX = x + 18;
+          const imgY = bodyY + (bodyH - imgSize) / 2;
+
+          await drawCandidateVisualOnCanvas(posterCtx, cand, imgX, imgY, imgSize, imgSize, {
+            radius: 14,
+          });
+          if (seq !== posterRenderSeq) return;
+
+          posterCtx.strokeStyle = 'rgba(15, 23, 42, 0.12)';
+          posterCtx.lineWidth = 2.5;
+          posterCtx.beginPath();
+          posterCtx.roundRect(imgX, imgY, imgSize, imgSize, 14);
+          posterCtx.stroke();
+
+          // Right-hand text area
+          const textX = imgX + imgSize + 22;
+          const textMaxW = x + cardW - textX - 18;
+
+          posterCtx.fillStyle = '#0F172A';
+          posterCtx.textAlign = 'left';
+          posterCtx.textBaseline = 'middle';
+          posterCtx.font = '900 30px "Pretendard", "Noto Sans KR", sans-serif';
+
+          // Wrap title cleanly across up to 2 lines
+          const titleWords = cand.title.split(' ');
+          const titleLines: string[] = [];
+          let curLine = '';
+          for (const w of titleWords) {
+            const candidateLine = curLine ? `${curLine} ${w}` : w;
+            if (posterCtx.measureText(candidateLine).width > textMaxW && curLine) {
+              titleLines.push(curLine);
+              curLine = w;
+            } else {
+              curLine = candidateLine;
+            }
+          }
+          if (curLine) titleLines.push(curLine);
+
+          const titleTopY = bodyY + (titleLines.length > 1 ? 66 : 84);
+          titleLines.slice(0, 2).forEach((ln, li) => {
+            posterCtx.fillText(ln, textX, titleTopY + li * 38);
+          });
+
+          // Subtitle / slogan wrapped across up to 2 lines
+          const subText = cand.subtitle || cand.description || '';
+          if (subText) {
+            posterCtx.fillStyle = '#475569';
+            posterCtx.font = '600 19px "Pretendard", "Noto Sans KR", sans-serif';
+            const subWords = subText.split(' ');
+            const subLines: string[] = [];
+            let curSub = '';
+            for (const w of subWords) {
+              const testSub = curSub ? `${curSub} ${w}` : w;
+              if (posterCtx.measureText(testSub).width > textMaxW && curSub) {
+                subLines.push(curSub);
+                curSub = w;
+              } else {
+                curSub = testSub;
+              }
+            }
+            if (curSub) subLines.push(curSub);
+
+            const subStartY = titleTopY + Math.min(2, titleLines.length) * 38 + 20;
+            subLines.slice(0, 2).forEach((sln, si) => {
+              const trimmed =
+                si === 1 && subLines.length > 2 ? `${sln.slice(0, Math.max(4, sln.length - 1))}…` : sln;
+              posterCtx.fillText(trimmed, textX, subStartY + si * 26);
+            });
+          }
+        } else if (hasImg) {
+          // Photo poster area (e.g., 4x2 winter snacks grid)
           const imgPad = 10;
           const imgX = x + imgPad;
           const imgY = y + ribbonH + 9;

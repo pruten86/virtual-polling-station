@@ -197,6 +197,8 @@ export function isRemovedOfficialPoll(
 }
 
 const WINTER_SNACKS_GRID_SRC = '/images/winter-snacks.jpg';
+const LUNCH_MENUS_GRID_SRC = '/images/lunch-menus.png';
+const DINNER_MENUS_GRID_SRC = '/images/dinner-menus.png';
 
 export const PRESET_POLLS: PollStation[] = [
   {
@@ -396,6 +398,16 @@ export const PRESET_POLLS: PollStation[] = [
         accentBg: '#f43f5e',
         description: '한국인의 소울푸드! 얼큰하고 진한 국물과 두툼한 돼지고기의 환상 궁합',
         votes: 0,
+        imageCrop: {
+          src: LUNCH_MENUS_GRID_SRC,
+          col: 0,
+          row: 0,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.018,
+          cropBottom: 0.482,
+          insetX: 0.018,
+        },
       },
       {
         id: 'poll-lunch-2',
@@ -407,6 +419,16 @@ export const PRESET_POLLS: PollStation[] = [
         accentBg: '#3b82f6',
         description: '황금빛 튀김옷과 부드러운 육즙의 향연! 남녀노소 사랑받는 점심 1등 메뉴',
         votes: 0,
+        imageCrop: {
+          src: LUNCH_MENUS_GRID_SRC,
+          col: 1,
+          row: 0,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.018,
+          cropBottom: 0.482,
+          insetX: 0.018,
+        },
       },
       {
         id: 'poll-lunch-3',
@@ -418,6 +440,37 @@ export const PRESET_POLLS: PollStation[] = [
         accentBg: '#10b981',
         description: '속 편하고 활력 넘치는 한 그릇! 고단백 슈퍼푸드로 채우는 든든한 하루',
         votes: 0,
+        imageCrop: {
+          src: LUNCH_MENUS_GRID_SRC,
+          col: 0,
+          row: 1,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.518,
+          cropBottom: 0.945,
+          insetX: 0.018,
+        },
+      },
+      {
+        id: 'poll-lunch-4',
+        symbolNumber: 4,
+        party: '든든한국밥당',
+        title: '뜨끈한 사골 국밥 정식',
+        subtitle: '진한 사골 육수 + 푸짐한 고기 + 깍두기',
+        badgeColor: 'amber',
+        accentBg: '#D97706',
+        description: '진한 사골 육수 + 푸짐한 고기 + 깍두기',
+        votes: 0,
+        imageCrop: {
+          src: LUNCH_MENUS_GRID_SRC,
+          col: 1,
+          row: 1,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.518,
+          cropBottom: 0.945,
+          insetX: 0.018,
+        },
       },
     ],
   },
@@ -431,6 +484,7 @@ export const PRESET_POLLS: PollStation[] = [
     isOfficial: true,
     isPermanent: false,
     expiresAt: OFFICIAL_DINNER_DEADLINE,
+    resultVisibility: 'realtime',
     candidates: [
       {
         id: 'poll-dinner-1',
@@ -442,6 +496,16 @@ export const PRESET_POLLS: PollStation[] = [
         accentBg: '#f43f5e',
         description: '회식의 불패 신화! 고소한 돼지 기름과 갓 구운 김치의 환상적인 조화',
         votes: 0,
+        imageCrop: {
+          src: DINNER_MENUS_GRID_SRC,
+          col: 0,
+          row: 0,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.018,
+          cropBottom: 0.482,
+          insetX: 0.018,
+        },
       },
       {
         id: 'poll-dinner-2',
@@ -453,6 +517,16 @@ export const PRESET_POLLS: PollStation[] = [
         accentBg: '#f59e0b',
         description: '캐주얼하고 활기찬 분위기! 부담 없이 즐기는 겉바속촉 치킨의 향연',
         votes: 0,
+        imageCrop: {
+          src: DINNER_MENUS_GRID_SRC,
+          col: 1,
+          row: 0,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.018,
+          cropBottom: 0.482,
+          insetX: 0.018,
+        },
       },
       {
         id: 'poll-dinner-3',
@@ -464,6 +538,37 @@ export const PRESET_POLLS: PollStation[] = [
         accentBg: '#0284c7',
         description: '깔끔하고 고급스러운 한 상! 싱싱한 제철 활어회로 속 편하고 품격 있는 회식',
         votes: 0,
+        imageCrop: {
+          src: DINNER_MENUS_GRID_SRC,
+          col: 0,
+          row: 1,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.518,
+          cropBottom: 0.945,
+          insetX: 0.018,
+        },
+      },
+      {
+        id: 'poll-dinner-4',
+        symbolNumber: 4,
+        party: '분위기만점당',
+        title: '프리미엄 스테이크 & 레드와인',
+        subtitle: '육즙 가득 안심·등심 스테이크 + 와인 페어링',
+        badgeColor: 'purple',
+        accentBg: '#9333EA',
+        description: '육즙 가득 안심·등심 스테이크 + 와인 페어링',
+        votes: 0,
+        imageCrop: {
+          src: DINNER_MENUS_GRID_SRC,
+          col: 1,
+          row: 1,
+          cols: 2,
+          rows: 2,
+          cropTop: 0.518,
+          cropBottom: 0.945,
+          insetX: 0.018,
+        },
       },
     ],
   },

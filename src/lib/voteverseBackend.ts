@@ -1365,12 +1365,50 @@ export async function castVote(
     }
 
     // Snapshot candidate vote_count right before insert (trigger-safe)
-    const { data: beforeOptData } = await supabase
+    let { data: beforeOptData } = await supabase
       .from('poll_options')
       .select('vote_count')
       .eq('poll_id', pollId)
       .eq('id', candidateId)
-      .single();
+      .maybeSingle();
+
+    // Defensive sync: if newly added official option (e.g., poll-lunch-4, poll-dinner-4) is missing in DB, upsert it safely before voting
+    if (!beforeOptData && resolvedPoll) {
+      const targetCand = (resolvedPoll.candidates || []).find((c) => c.id === candidateId);
+      if (targetCand) {
+        const idx = Math.max(0, (resolvedPoll.candidates || []).findIndex((c) => c.id === candidateId));
+        await upsertPollOptionsSafe(
+          [
+            {
+              id: targetCand.id,
+              poll_id: pollId,
+              symbol_number: targetCand.symbolNumber || idx + 1,
+              sort_order: targetCand.symbolNumber || idx + 1,
+              party: targetCand.party || `기호 ${idx + 1}번`,
+              title: targetCand.title,
+              subtitle: formatDbOptionSubtitle(
+                targetCand.party,
+                targetCand.subtitle || targetCand.description,
+                targetCand.symbolNumber || idx + 1
+              ),
+              badge_color: targetCand.badgeColor || 'amber',
+              accent_bg: targetCand.accentBg || '#D97706',
+              vote_count: 0,
+              ...(targetCand.imageUrl ? { image_url: targetCand.imageUrl } : {}),
+            },
+          ],
+          { ignoreDuplicates: true }
+        );
+        const recheck = await supabase
+          .from('poll_options')
+          .select('vote_count')
+          .eq('poll_id', pollId)
+          .eq('id', candidateId)
+          .maybeSingle();
+        beforeOptData = recheck.data;
+      }
+    }
+
     const beforeCount = beforeOptData ? Number(beforeOptData.vote_count) || 0 : 0;
 
     // c) Insert new vote row directly into public.votes
@@ -1464,7 +1502,7 @@ export async function castVote(
       .select('vote_count')
       .eq('poll_id', pollId)
       .eq('id', candidateId)
-      .single();
+      .maybeSingle();
     const afterCount = afterOptData ? Number(afterOptData.vote_count) || 0 : beforeCount;
 
     if (afterCount <= beforeCount) {

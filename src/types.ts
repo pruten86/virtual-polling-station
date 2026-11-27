@@ -137,6 +137,7 @@ export interface CandidateImageCrop {
   rows: number;
   cropTop: number;
   cropBottom: number;
+  insetX?: number;
 }
 
 export interface Candidate {
