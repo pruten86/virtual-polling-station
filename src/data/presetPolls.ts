@@ -181,8 +181,20 @@ export function generateRandomNickname(): string {
 
 // Fixed seasonal deadlines for limited-time official polls
 const OFFICIAL_WINTER_SNACKS_DEADLINE = new Date('2027-02-28T23:59:59+09:00').getTime();
-const OFFICIAL_MONDAY11_DEADLINE = new Date(2026, 11, 18, 23, 59, 0).getTime();
 const OFFICIAL_DINNER_DEADLINE = new Date(2026, 11, 31, 23, 59, 0).getTime();
+
+export const REMOVED_OFFICIAL_POLL_IDS = new Set(['poll-monday11']);
+
+export function isRemovedOfficialPoll(
+  poll?: { id?: string | null; title?: string | null } | null
+): boolean {
+  if (!poll) return false;
+  const id = typeof poll.id === 'string' ? poll.id.trim() : '';
+  const title = typeof poll.title === 'string' ? poll.title : '';
+  if (id && REMOVED_OFFICIAL_POLL_IDS.has(id)) return true;
+  if (title.includes('월요일 11시 출근제')) return true;
+  return false;
+}
 
 const WINTER_SNACKS_GRID_SRC = '/images/winter-snacks.jpg';
 
@@ -405,53 +417,6 @@ export const PRESET_POLLS: PollStation[] = [
         badgeColor: 'emerald',
         accentBg: '#10b981',
         description: '속 편하고 활력 넘치는 한 그릇! 고단백 슈퍼푸드로 채우는 든든한 하루',
-        votes: 0,
-      },
-    ],
-  },
-  {
-    id: 'poll-monday11',
-    title: '월요일 11시 출근제 도입 찬반 투표',
-    description: '월요병 해소와 업무 몰입 증진을 위한 유연근무 혁신 안건입니다.',
-    category: 'public',
-    maxVoters: 100,
-    createdAt: '2026-11-07',
-    isOfficial: true,
-    isPermanent: false,
-    expiresAt: OFFICIAL_MONDAY11_DEADLINE,
-    resultVisibility: 'realtime',
-    candidates: [
-      {
-        id: 'poll-monday11-1',
-        symbolNumber: 1,
-        party: '워라밸혁신당',
-        title: '적극 찬성 (11시 출근 시행)',
-        subtitle: '충분한 휴식으로 주간 업무 효율 극대화',
-        badgeColor: 'blue',
-        accentBg: '#3b82f6',
-        description: '월요일 출근길 지옥철 회피 및 충분한 재충전으로 생산성을 높입니다.',
-        votes: 0,
-      },
-      {
-        id: 'poll-monday11-2',
-        symbolNumber: 2,
-        party: '안정운영당',
-        title: '반대 (현행 9시 유지)',
-        subtitle: '거래처 협업 및 업무 연속성 유지',
-        badgeColor: 'rose',
-        accentBg: '#f43f5e',
-        description: '외부 고객사 응대 및 주요 주간 회의 일정 조율을 위해 기존 체제를 유지합니다.',
-        votes: 0,
-      },
-      {
-        id: 'poll-monday11-3',
-        symbolNumber: 3,
-        party: '단계적도입당',
-        title: '1개월 시범 운영 후 재검토',
-        subtitle: '데이터 분석 후 부작용 보완 도입',
-        badgeColor: 'amber',
-        accentBg: '#f59e0b',
-        description: '단기 시범 운영을 통해 장단점을 객관적으로 파악하고 보완책을 마련합니다.',
         votes: 0,
       },
     ],
@@ -754,11 +719,22 @@ export function getAllPolls(): PollStation[] {
   );
 
   try {
+    // Clean up any stale localStorage tally/channel records for removed official polls
+    REMOVED_OFFICIAL_POLL_IDS.forEach((removedId) => {
+      localStorage.removeItem(STORAGE_KEY_TALLIES_PREFIX + removedId);
+      localStorage.removeItem(STORAGE_KEY_CHANNELS_PREFIX + removedId);
+    });
+
     const raw = localStorage.getItem(STORAGE_KEY_POLLS);
     if (raw) {
       const parsed = JSON.parse(raw) as PollStation[];
+      const hasRemovedEntry = parsed.some((p) => isRemovedOfficialPoll(p));
+      const cleanedParsed = parsed.filter((p) => !isRemovedOfficialPoll(p));
+      if (hasRemovedEntry) {
+        localStorage.setItem(STORAGE_KEY_POLLS, JSON.stringify(cleanedParsed));
+      }
       // Preserve ALL custom polls including expired ones so results remain inspectable in Lobby
-      const customPolls = parsed
+      const customPolls = cleanedParsed
         .filter((p) => p.isCustom)
         .map((p) => (closedOverrides[p.id] ? { ...p, expiresAt: closedOverrides[p.id] } : p));
 
@@ -1257,7 +1233,9 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
     const presetById = new Map(PRESET_POLLS.map((p) => [p.id, p]));
     const localById = new Map(localPolls.map((p) => [p.id, p]));
 
-    const remotePolls: PollStation[] = pollsData.map((row: any) => {
+    const remotePolls: PollStation[] = pollsData
+      .filter((row: any) => !isRemovedOfficialPoll({ id: String(row?.id || ''), title: row?.title }))
+      .map((row: any) => {
       const rowId = String(row.id);
       const presetMatch = presetById.get(rowId);
       const localMatch = localById.get(rowId);
@@ -1309,7 +1287,7 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
       }
     });
 
-    return merged;
+    return merged.filter((p) => !isRemovedOfficialPoll(p));
   } catch (err) {
     console.warn('[Supabase fetchPollsAsync error, fallback to local]', err);
     return localPolls;

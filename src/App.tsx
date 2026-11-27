@@ -31,6 +31,7 @@ import {
   computeOfficialStationNumber,
   getPollWinnerSummary,
   formatScheduledDeadlineKorean,
+  isRemovedOfficialPoll,
 } from './data/presetPolls';
 import {
   ensureAnonymousAuth,
@@ -194,9 +195,11 @@ export default function App() {
   });
 
   // All Polls (synced with Supabase DB for Lobby & Realtime)
-  const [allPolls, setAllPolls] = useState<PollStation[]>(() => getAllPolls());
+  const [allPolls, setAllPolls] = useState<PollStation[]>(() =>
+    getAllPolls().filter((p) => !isRemovedOfficialPoll(p))
+  );
   const handlePollsUpdated = useCallback((updated: PollStation[]) => {
-    setAllPolls(updated);
+    setAllPolls(updated.filter((p) => !isRemovedOfficialPoll(p)));
   }, []);
 
   // Currently Selected Polling Station / Poll
@@ -204,14 +207,14 @@ export default function App() {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const pollQuery = urlParams.get('poll');
-      const all = getAllPolls();
-      if (pollQuery) {
+      const all = getAllPolls().filter((p) => !isRemovedOfficialPoll(p));
+      if (pollQuery && !isRemovedOfficialPoll({ id: pollQuery })) {
         const found = all.find((p) => p.id === pollQuery);
         if (found) return found;
       }
       return all[0];
     } catch {
-      return getAllPolls()[0];
+      return getAllPolls().filter((p) => !isRemovedOfficialPoll(p))[0];
     }
   });
   const currentPollRef = useRef<PollStation>(currentPoll);

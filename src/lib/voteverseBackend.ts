@@ -34,6 +34,7 @@ import {
   parseOptionPartyAndSubtitle,
   mergeOfficialPresetCandidates,
   isPollPermanent,
+  isRemovedOfficialPoll,
 } from '../data/presetPolls';
 
 const STORAGE_KEY_VOTED_PREFIX = 'vps_user_voted_';
@@ -43,7 +44,6 @@ const ADMIN_UNLOCKED_POLLS_KEY = 'voteverse_admin_unlocked_polls';
 export const OFFICIAL_PRESET_POLL_IDS = new Set([
   'poll-winter-snacks',
   'poll-lunch',
-  'poll-monday11',
   'poll-dinner',
 ]);
 
@@ -204,7 +204,7 @@ async function upsertPollOptionsSafe(
 
 /**
  * Repairs & seeds poll_options for official preset polls:
- * - Detects corrupted/wrong rows (e.g., lunch candidates inside poll-monday11 or poll-dinner, or legacy IDs)
+ * - Detects corrupted/wrong rows (e.g., mismatched candidates or legacy IDs)
  * - Deletes invalid/mismatched rows cleanly (handling FK constraints on votes if needed)
  * - Upserts canonical PRESET_POLLS candidates with unique IDs while preserving valid existing vote_counts
  */
@@ -312,6 +312,7 @@ async function repairOfficialPresetOptions(targetPollIds: string[]): Promise<voi
  */
 export async function ensurePollAndOptionsExist(poll: PollStation): Promise<void> {
   if (!isSupabaseConfigured || !supabase || !poll?.id) return;
+  if (isRemovedOfficialPoll(poll)) return;
 
   try {
     const presetSource = PRESET_POLLS.find((p) => p.id === poll.id);
@@ -560,7 +561,9 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
     const closedOverrides = getClosedPollOverrides();
     const localPollsById = new Map(localPolls.map((p) => [p.id, p]));
 
-    const remotePolls: PollStation[] = pollsData.map((row: any) => {
+    const remotePolls: PollStation[] = pollsData
+      .filter((row: any) => !isRemovedOfficialPoll({ id: String(row?.id || ''), title: row?.title }))
+      .map((row: any) => {
       const pollIdStr = String(row.id);
       const presetMatch = presetById.get(pollIdStr);
       const localMatch = localPollsById.get(pollIdStr);
@@ -648,10 +651,10 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
         });
       });
 
-    return merged;
+    return merged.filter((p) => !isRemovedOfficialPoll(p));
   } catch (err) {
     console.warn('[Voteverse fetchPolls error, using local fallback]', err);
-    return localPolls;
+    return localPolls.filter((p) => !isRemovedOfficialPoll(p));
   }
 }
 
@@ -736,7 +739,7 @@ function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
  * Fetches a single poll (public OR private) by ID from Supabase for cross-device ?poll=ID share links
  */
 export async function fetchPollByIdFromDB(pollId: string): Promise<PollStation | null> {
-  if (!pollId) return null;
+  if (!pollId || isRemovedOfficialPoll({ id: pollId })) return null;
   const presetMatch = PRESET_POLLS.find((p) => p.id === pollId);
   const localMatch = getAllPolls().find((p) => p.id === pollId);
 
@@ -751,7 +754,7 @@ export async function fetchPollByIdFromDB(pollId: string): Promise<PollStation |
       .eq('id', pollId)
       .maybeSingle();
 
-    if (error || !pollRow) {
+    if (error || !pollRow || isRemovedOfficialPoll({ id: String(pollRow.id), title: pollRow.title })) {
       return presetMatch || localMatch || null;
     }
 
