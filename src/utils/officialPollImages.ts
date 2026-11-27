@@ -1,9 +1,10 @@
-import { Candidate } from '../types';
+import { Candidate, hasCandidateImage } from '../types';
 import {
   BETA_DISCLAIMER_TEXT,
   PollWinnerSummary,
   formatClosedDateTimeDot,
 } from '../data/presetPolls';
+import { drawCandidateVisualOnCanvas } from './candidateImage';
 
 function wrapTextLines(
   ctx: CanvasRenderingContext2D,
@@ -285,27 +286,103 @@ export async function renderWinnerCertificateCanvas(
     if (winners.length === 1) {
       const w = winners[0];
       const accent = w.accentBg || '#2563eb';
+      const winnerHasImage = hasCandidateImage(w);
 
-      // Party Colored Pill
-      ctx.font = '800 22px "Pretendard", "Noto Sans KR", sans-serif';
-      const partyText = `기호 ${w.symbolNumber}번 · ${w.party}`;
-      const partyW = Math.min(boxW - 80, Math.max(220, ctx.measureText(partyText).width + 54));
-      drawRoundedRect(ctx, W / 2 - partyW / 2, boxY + 92, partyW, 42, 21);
-      ctx.fillStyle = accent;
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(partyText, W / 2, boxY + 114);
+      if (winnerHasImage) {
+        // Circular gold-framed 1st-place portrait on left + Party & Title aligned on right
+        const photoDiameter = 148;
+        const photoCx = boxX + 132;
+        const photoCy = boxY + 164;
+        const photoX = photoCx - photoDiameter / 2;
+        const photoY = photoCy - photoDiameter / 2;
 
-      // Winner Title
-      ctx.fillStyle = '#1c1917';
-      ctx.font = '800 44px "Pretendard", "Noto Sans KR", sans-serif';
-      const wLines = wrapTextLines(ctx, w.title, boxW - 90, 2);
-      if (wLines.length === 1) {
-        ctx.fillText(wLines[0], W / 2, boxY + 188);
+        // Soft ambient drop shadow behind circular gold medallion
+        ctx.save();
+        ctx.shadowColor = 'rgba(180, 83, 9, 0.28)';
+        ctx.shadowBlur = 16;
+        ctx.shadowOffsetY = 5;
+        ctx.fillStyle = '#fef3c7';
+        ctx.beginPath();
+        ctx.arc(photoCx, photoCy, photoDiameter / 2 + 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        await drawCandidateVisualOnCanvas(
+          ctx,
+          w,
+          photoX,
+          photoY,
+          photoDiameter,
+          photoDiameter,
+          { circle: true }
+        );
+
+        // Outer metallic gold ring + inner champagne highlight ring
+        const ringGrad = ctx.createLinearGradient(photoX, photoY, photoX + photoDiameter, photoY + photoDiameter);
+        ringGrad.addColorStop(0, '#f59e0b');
+        ringGrad.addColorStop(0.5, '#fde68a');
+        ringGrad.addColorStop(1, '#b45309');
+        ctx.strokeStyle = ringGrad;
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.arc(photoCx, photoCy, photoDiameter / 2 + 3.5, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(photoCx, photoCy, photoDiameter / 2 - 1, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const rightX = boxX + 238;
+        const rightMaxW = boxW - 278;
+
+        // Party Colored Pill (left-aligned beside portrait)
+        ctx.font = '800 21px "Pretendard", "Noto Sans KR", sans-serif';
+        const partyText = `기호 ${w.symbolNumber}번 · ${w.party}`;
+        const partyW = Math.min(rightMaxW, Math.max(200, ctx.measureText(partyText).width + 44));
+        drawRoundedRect(ctx, rightX, boxY + 98, partyW, 40, 20);
+        ctx.fillStyle = accent;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.fillText(partyText, rightX + partyW / 2, boxY + 119);
+
+        // Winner Title (left-aligned beside portrait)
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#1c1917';
+        ctx.font = '800 40px "Pretendard", "Noto Sans KR", sans-serif';
+        const wLines = wrapTextLines(ctx, w.title, rightMaxW, 2);
+        if (wLines.length === 1) {
+          ctx.fillText(wLines[0], rightX, boxY + 186);
+        } else {
+          ctx.font = '800 34px "Pretendard", "Noto Sans KR", sans-serif';
+          ctx.fillText(wLines[0], rightX, boxY + 170);
+          ctx.fillText(wLines[1], rightX, boxY + 212);
+        }
+        ctx.textAlign = 'center';
       } else {
-        ctx.font = '800 36px "Pretendard", "Noto Sans KR", sans-serif';
-        ctx.fillText(wLines[0], W / 2, boxY + 170);
-        ctx.fillText(wLines[1], W / 2, boxY + 214);
+        // Party Colored Pill
+        ctx.font = '800 22px "Pretendard", "Noto Sans KR", sans-serif';
+        const partyText = `기호 ${w.symbolNumber}번 · ${w.party}`;
+        const partyW = Math.min(boxW - 80, Math.max(220, ctx.measureText(partyText).width + 54));
+        drawRoundedRect(ctx, W / 2 - partyW / 2, boxY + 92, partyW, 42, 21);
+        ctx.fillStyle = accent;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(partyText, W / 2, boxY + 114);
+
+        // Winner Title
+        ctx.fillStyle = '#1c1917';
+        ctx.font = '800 44px "Pretendard", "Noto Sans KR", sans-serif';
+        const wLines = wrapTextLines(ctx, w.title, boxW - 90, 2);
+        if (wLines.length === 1) {
+          ctx.fillText(wLines[0], W / 2, boxY + 188);
+        } else {
+          ctx.font = '800 36px "Pretendard", "Noto Sans KR", sans-serif';
+          ctx.fillText(wLines[0], W / 2, boxY + 170);
+          ctx.fillText(wLines[1], W / 2, boxY + 214);
+        }
       }
     } else {
       // Co-winners (tie): list neatly up to 3 rows
@@ -545,6 +622,43 @@ export async function renderFinalResultsCanvas(
     ctx.font = '800 26px "Pretendard", "Noto Sans KR", sans-serif';
     ctx.fillText('🏆 최종 개표 확정 결과: 투표 없음 (0표)', 106, bannerY + bannerH / 2);
   } else {
+    const firstWinner = winnerSummary.winners[0];
+    const hasWinnerPhoto = Boolean(firstWinner && hasCandidateImage(firstWinner));
+    let bannerTextX = 104;
+    let bannerMaxW = W - 380;
+
+    if (hasWinnerPhoto && firstWinner) {
+      const photoSize = 86;
+      const photoCx = 142;
+      const photoCy = bannerY + bannerH / 2;
+      const photoX = photoCx - photoSize / 2;
+      const photoY = photoCy - photoSize / 2;
+
+      await drawCandidateVisualOnCanvas(
+        ctx,
+        firstWinner,
+        photoX,
+        photoY,
+        photoSize,
+        photoSize,
+        { circle: true }
+      );
+
+      // Circular gold border ring around 1st-place photo
+      const goldRing = ctx.createLinearGradient(photoX, photoY, photoX + photoSize, photoY + photoSize);
+      goldRing.addColorStop(0, '#fde68a');
+      goldRing.addColorStop(0.5, '#f59e0b');
+      goldRing.addColorStop(1, '#fbbf24');
+      ctx.strokeStyle = goldRing;
+      ctx.lineWidth = 4.5;
+      ctx.beginPath();
+      ctx.arc(photoCx, photoCy, photoSize / 2 + 2.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      bannerTextX = 208;
+      bannerMaxW = W - 492;
+    }
+
     ctx.fillStyle = '#6ee7b7';
     ctx.font = '800 21px "Pretendard", "Noto Sans KR", sans-serif';
     ctx.fillText(
@@ -553,7 +667,7 @@ export async function renderFinalResultsCanvas(
         : input.isClosed
         ? '🏆 최종 제1위 당선 확정'
         : '🏆 현재 제1위 선두',
-      104,
+      bannerTextX,
       bannerY + 38
     );
 
@@ -562,8 +676,8 @@ export async function renderFinalResultsCanvas(
       .join(' · ');
     ctx.fillStyle = '#ffffff';
     ctx.font = '800 30px "Pretendard", "Noto Sans KR", sans-serif';
-    const wDisplayLine = wrapTextLines(ctx, winnerDisplay, W - 380, 1)[0];
-    ctx.fillText(wDisplayLine, 104, bannerY + 86);
+    const wDisplayLine = wrapTextLines(ctx, winnerDisplay, bannerMaxW, 1)[0];
+    ctx.fillText(wDisplayLine, bannerTextX, bannerY + 86);
 
     // Right big percentage badge
     ctx.textAlign = 'right';

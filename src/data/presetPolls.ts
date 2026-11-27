@@ -180,10 +180,188 @@ export function generateRandomNickname(): string {
 }
 
 // Fixed seasonal deadlines for limited-time official polls
+const OFFICIAL_WINTER_SNACKS_DEADLINE = new Date('2027-02-28T23:59:59+09:00').getTime();
 const OFFICIAL_MONDAY11_DEADLINE = new Date(2026, 11, 18, 23, 59, 0).getTime();
 const OFFICIAL_DINNER_DEADLINE = new Date(2026, 11, 31, 23, 59, 0).getTime();
 
+const WINTER_SNACKS_GRID_SRC = '/images/winter-snacks.jpg';
+
 export const PRESET_POLLS: PollStation[] = [
+  {
+    id: 'poll-winter-snacks',
+    title: '겨울에 가장 먹고 싶은 간식은?',
+    description:
+      '찬 바람 불면 생각나는 겨울 대표 길거리 간식 8종! 사진으로 보고 내 최애 간식에 소중한 한 표를 찍어보세요.',
+    category: 'public',
+    maxVoters: 100,
+    createdAt: '2026-11-27',
+    isOfficial: true,
+    isPermanent: false,
+    expiresAt: OFFICIAL_WINTER_SNACKS_DEADLINE,
+    resultVisibility: 'realtime',
+    candidates: [
+      {
+        id: 'poll-winter-snacks-1',
+        symbolNumber: 1,
+        party: '겉바속촉당',
+        title: '붕어빵 (팥·슈크림)',
+        subtitle: '머리부터 꼬리까지 팥·슈크림 꽉 채운 겨울 근본 간식',
+        badgeColor: 'amber',
+        accentBg: '#F59E0B',
+        description: '머리부터 꼬리까지 팥·슈크림 꽉 채운 겨울 근본 간식',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 0,
+          row: 0,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.23,
+          cropBottom: 0.46,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-2',
+        symbolNumber: 2,
+        party: '꿀흐름주의당',
+        title: '호떡 (씨앗·꿀)',
+        subtitle: '고소한 씨앗과 달콤한 흑설탕 꿀이 입안에서 톡 터지는 맛',
+        badgeColor: 'orange',
+        accentBg: '#EA580C',
+        description: '고소한 씨앗과 달콤한 흑설탕 꿀이 입안에서 톡 터지는 맛',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 1,
+          row: 0,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.23,
+          cropBottom: 0.46,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-3',
+        symbolNumber: 3,
+        party: '속노란꿀당',
+        title: '군고구마 (꿀 고구마)',
+        subtitle: '김이 모락모락, 반으로 가르면 꿀이 흐르는 겨울 포만감 1위',
+        badgeColor: 'purple',
+        accentBg: '#7C3AED',
+        description: '김이 모락모락, 반으로 가르면 꿀이 흐르는 겨울 포만감 1위',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 2,
+          row: 0,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.23,
+          cropBottom: 0.46,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-4',
+        symbolNumber: 4,
+        party: '뜨끈한국물당',
+        title: '어묵 (국물 한 컵)',
+        subtitle: '찬 바람 부는 길거리에서 종이컵 국물 한 모금이면 추위 끝',
+        badgeColor: 'blue',
+        accentBg: '#0284C7',
+        description: '찬 바람 부는 길거리에서 종이컵 국물 한 모금이면 추위 끝',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 3,
+          row: 0,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.23,
+          cropBottom: 0.46,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-5',
+        symbolNumber: 5,
+        party: '호호불어당',
+        title: '호빵 (단팥·야채)',
+        subtitle: '찜기에서 갓 꺼낸 폭신한 반죽 속 단팥·야채의 정석',
+        badgeColor: 'rose',
+        accentBg: '#E11D48',
+        description: '찜기에서 갓 꺼낸 폭신한 반죽 속 단팥·야채의 정석',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 0,
+          row: 1,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.595,
+          cropBottom: 0.845,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-6',
+        symbolNumber: 6,
+        party: '당충전포근당',
+        title: '핫초코 (마시멜로)',
+        subtitle: '진한 코코아 위 사르르 녹아내리는 마시멜로의 달콤한 위로',
+        badgeColor: 'amber',
+        accentBg: '#78350F',
+        description: '진한 코코아 위 사르르 녹아내리는 마시멜로의 달콤한 위로',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 1,
+          row: 1,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.595,
+          cropBottom: 0.845,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-7',
+        symbolNumber: 7,
+        party: '단짠완벽당',
+        title: '계란빵 (따끈하게)',
+        subtitle: '달콤한 반죽 위 통째로 올라간 계란의 묵직한 단짠 조화',
+        badgeColor: 'amber',
+        accentBg: '#CA8A04',
+        description: '달콤한 반죽 위 통째로 올라간 계란의 묵직한 단짠 조화',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 2,
+          row: 1,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.595,
+          cropBottom: 0.845,
+        },
+      },
+      {
+        id: 'poll-winter-snacks-8',
+        symbolNumber: 8,
+        party: '까먹는재미당',
+        title: '군밤 (한 봉지)',
+        subtitle: '고소하게 구워져 한 알씩 까먹다 보면 순삭되는 겨울 별미',
+        badgeColor: 'emerald',
+        accentBg: '#059669',
+        description: '고소하게 구워져 한 알씩 까먹다 보면 순삭되는 겨울 별미',
+        votes: 0,
+        imageCrop: {
+          src: WINTER_SNACKS_GRID_SRC,
+          col: 3,
+          row: 1,
+          cols: 4,
+          rows: 2,
+          cropTop: 0.595,
+          cropBottom: 0.845,
+        },
+      },
+    ],
+  },
   {
     id: 'poll-lunch',
     title: '제1회 오늘 점심 메뉴 모의투표',
@@ -1066,6 +1244,12 @@ export async function fetchPollsAsync(): Promise<PollStation[]> {
           accentBg: opt.accent_bg || '#3b82f6',
           description: opt.description || subtitle || '',
           votes: Number(opt.vote_count) || 0,
+          imageUrl:
+            typeof opt.image_url === 'string' && opt.image_url.trim()
+              ? opt.image_url.trim()
+              : typeof opt.imageUrl === 'string' && opt.imageUrl.trim()
+              ? opt.imageUrl.trim()
+              : undefined,
         });
       });
     }
@@ -1167,8 +1351,8 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
         await supabase.from('polls').upsert([basePollRow]);
       }
 
-      // Upsert options preserving party in both party and subtitle
-      const optionRowsWithParty = poll.candidates.map((c, idx) => ({
+      // Upsert options preserving party and optional image_url with schema fallback
+      const optionRowsFull = poll.candidates.map((c, idx) => ({
         id: c.id,
         poll_id: poll.id,
         symbol_number: c.symbolNumber || idx + 1,
@@ -1179,17 +1363,26 @@ export async function savePollAsync(poll: PollStation): Promise<void> {
         badge_color: c.badgeColor,
         accent_bg: c.accentBg,
         vote_count: c.votes || 0,
+        ...(c.imageUrl ? { image_url: c.imageUrl } : {}),
       }));
 
-      const { error: optErr } = await supabase.from('poll_options').upsert(optionRowsWithParty);
+      let optErr = (await supabase.from('poll_options').upsert(optionRowsFull)).error;
       if (
         optErr &&
-        ((optErr.message || '').includes('party') ||
+        ((optErr.message || '').includes('image_url') ||
+          (optErr.message || '').includes('party') ||
           optErr.code === '42703' ||
           optErr.code === 'PGRST204')
       ) {
-        const optionRowsNoParty = optionRowsWithParty.map(({ party: _p, ...rest }) => rest);
-        await supabase.from('poll_options').upsert(optionRowsNoParty);
+        const optionRowsNoImage = optionRowsFull.map((row) => {
+          const { image_url: _img, ...rest } = row as Record<string, any>;
+          return rest;
+        });
+        optErr = (await supabase.from('poll_options').upsert(optionRowsNoImage)).error;
+        if (optErr) {
+          const optionRowsMinimal = optionRowsNoImage.map(({ party: _p, ...rest }) => rest);
+          await supabase.from('poll_options').upsert(optionRowsMinimal);
+        }
       }
     } catch (err) {
       console.warn('[Supabase savePollAsync error, saved to local]', err);

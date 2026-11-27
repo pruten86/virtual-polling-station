@@ -9,9 +9,11 @@ import {
   Candidate,
   ResultVisibility,
   normalizeResultVisibility,
+  isPhotoPollCandidates,
 } from '../types';
 import { sounds } from '../sound';
 import { AvatarIllustration } from './AvatarIllustration';
+import { CandidateThumbnail } from './CandidateThumbnail';
 import {
   generateRandomNickname,
   getAllPolls,
@@ -418,6 +420,8 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
         accentBg: hexes[idx % hexes.length],
         description: c.subtitle.trim() || '',
         votes: existingCandidate ? existingCandidate.votes : 0,
+        ...(existingCandidate?.imageUrl ? { imageUrl: existingCandidate.imageUrl } : {}),
+        ...(existingCandidate?.imageCrop ? { imageCrop: existingCandidate.imageCrop } : {}),
       };
     });
 
@@ -734,6 +738,12 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                             </span>
                           ) : null}
 
+                          {isPhotoPollCandidates(poll.candidates) && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-500/20 text-amber-200 border border-amber-400/45 whitespace-nowrap shrink-0">
+                              🖼️ 포토 투표소
+                            </span>
+                          )}
+
                           {normalizeResultVisibility(poll.resultVisibility) === 'after_close' && !isTimeClosed && (
                             <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-500/20 text-amber-200 border border-amber-400/50 whitespace-nowrap shrink-0">
                               🔒 마감 후 공개
@@ -759,6 +769,24 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                           {poll.description}
                         </p>
                       </div>
+
+                      {/* Photo Poll Mini Preview Strip (4 cute thumbnails + remaining count) */}
+                      {isPhotoPollCandidates(poll.candidates) && (
+                        <div className="flex items-center gap-1.5 pt-0.5">
+                          {poll.candidates.slice(0, 4).map((cand) => (
+                            <CandidateThumbnail
+                              key={cand.id}
+                              candidate={cand}
+                              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg border border-slate-600/80"
+                            />
+                          ))}
+                          {poll.candidates.length > 4 && (
+                            <span className="inline-flex items-center justify-center h-9 sm:h-10 px-2 rounded-lg bg-slate-800/90 border border-slate-700 text-[10px] font-bold text-amber-200">
+                              +{poll.candidates.length - 4}종
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {/* Meta Stats + Action Buttons (Responsive Wrap) */}
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-0.5">
@@ -987,9 +1015,16 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                                   <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                                 )}
                                 <div className="flex-1 space-y-1 min-w-0">
-                                  <span className="font-semibold block whitespace-normal break-keep break-words leading-snug">
-                                    {p.title}
-                                  </span>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-semibold whitespace-normal break-keep break-words leading-snug">
+                                      {p.title}
+                                    </span>
+                                    {isPhotoPollCandidates(p.candidates) && (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-amber-500/20 text-amber-200 border border-amber-400/45 whitespace-nowrap shrink-0">
+                                        🖼️ 포토 투표소
+                                      </span>
+                                    )}
+                                  </div>
                                   {isTimeClosed ? (
                                     <div className="flex items-center gap-1 flex-wrap">
                                       <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/25 text-rose-200 border border-rose-400/40 whitespace-nowrap shrink-0">

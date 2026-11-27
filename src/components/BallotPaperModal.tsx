@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Candidate } from '../types';
+import { Candidate, isPhotoPollCandidates } from '../types';
 import { sounds } from '../sound';
+import { CandidateThumbnail, CandidateImageLightbox } from './CandidateThumbnail';
 import { Check, Info, ShieldAlert, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface BallotPaperModalProps {
@@ -92,8 +93,11 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
 }) => {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(null);
+  const [lightboxCandidate, setLightboxCandidate] = useState<Candidate | null>(null);
   const [isFolding, setIsFolding] = useState(false);
   const [stampCoordinates, setStampCoordinates] = useState<{ [key: string]: { x: number; y: number } }>({});
+
+  const isPhotoPoll = isPhotoPollCandidates(candidates);
 
   const toggleExpandCandidate = (candidateId: string) => {
     setExpandedCandidateId((prev) => (prev === candidateId ? null : candidateId));
@@ -126,7 +130,9 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-3 bg-slate-950/85 backdrop-blur-md">
       <div
-        className={`relative max-w-xl sm:max-w-2xl w-full max-h-[96dvh] sm:max-h-[92dvh] flex flex-col transition-all duration-700 ease-in-out ${
+        className={`relative w-full max-h-[96dvh] sm:max-h-[92dvh] flex flex-col transition-all duration-700 ease-in-out ${
+          isPhotoPoll ? 'max-w-xl sm:max-w-3xl' : 'max-w-xl sm:max-w-2xl'
+        } ${
           isFolding
             ? 'scale-75 -rotate-6 opacity-0 translate-y-12'
             : 'scale-100 opacity-100'
@@ -172,18 +178,180 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
           <div className="relative shrink-0 flex items-center gap-1.5 px-2 py-1 sm:p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[10px] sm:text-xs mb-1.5 sm:mb-2.5 leading-tight sm:leading-snug">
             <Info className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 shrink-0" />
             <span className="whitespace-normal break-keep break-words">
-              원하는 후보의 <strong>[기표란]</strong>을 눌러 날인(<strong>卜</strong>) 후 하단 <strong>[투표용지 접기]</strong>를 누르세요.
+              {isPhotoPoll ? (
+                <>
+                  사진을 누르면 크게 볼 수 있으며, 원하는 후보의 <strong>[기표란]</strong>을 눌러 날인(<strong>卜</strong>) 후 하단 <strong>[투표용지 접기]</strong>를 누르세요.
+                </>
+              ) : (
+                <>
+                  원하는 후보의 <strong>[기표란]</strong>을 눌러 날인(<strong>卜</strong>) 후 하단 <strong>[투표용지 접기]</strong>를 누르세요.
+                </>
+              )}
             </span>
           </div>
 
-          {/* Candidates Table (Unified 4-Column Korean Ballot Grid) */}
-          <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden border-2 border-slate-900 bg-white shadow-sm mb-1.5 sm:mb-2.5 rounded-xs">
-            {/* Table Header */}
-            <div className="shrink-0 flex items-stretch bg-slate-100 text-[10px] sm:text-xs font-bold text-slate-700 text-center border-b-2 border-slate-900">
-              <div className="w-1.5 sm:w-2 shrink-0 bg-slate-300" />
-              <div className="w-9 sm:w-11 shrink-0 py-1 sm:py-1.5 border-r-2 border-slate-900 flex items-center justify-center">
-                기호
+          {isPhotoPoll ? (
+            /* Photo Election Ballot Card Grid (Mobile 1-col / PC 2-col, Zero Truncation) */
+            <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden border-2 border-slate-900 bg-[#f9f7f2] shadow-sm mb-1.5 sm:mb-2.5 rounded-sm">
+              <div className="shrink-0 flex items-center justify-between px-3 py-1.5 bg-slate-100 border-b-2 border-slate-900 text-[10px] sm:text-xs font-bold text-slate-700">
+                <span>🖼️ 포토 선거 투표용지 · 후보 {candidates.length}명</span>
+                <span>사진 클릭 확대 · 기표란 날인(卜)</span>
               </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 sm:p-2.5 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-2.5">
+                {candidates.map((candidate, idx) => {
+                  const isSelected = selectedCandidateId === candidate.id;
+                  const candidateColor = getCandidateColor(candidate, idx);
+                  const rawParty = candidate.party?.trim();
+                  const displayParty = rawParty || `기호 ${candidate.symbolNumber}번`;
+                  const rawDesc = (candidate.subtitle || candidate.description)?.trim() || '';
+                  const displayDesc = cleanCandidateDescription(rawDesc, displayParty);
+
+                  return (
+                    <div
+                      key={candidate.id}
+                      onClick={(e) => handleSelectCandidate(candidate.id, e)}
+                      className={`relative flex items-stretch rounded-xl border-2 bg-white overflow-hidden transition-all cursor-pointer group ${
+                        isSelected
+                          ? 'shadow-md'
+                          : 'border-slate-300 hover:border-slate-500 hover:shadow-sm'
+                      }`}
+                      style={
+                        isSelected
+                          ? {
+                              borderColor: candidateColor,
+                              backgroundColor: hexWithAlpha(candidateColor, 0.08),
+                              boxShadow: `0 0 0 2px ${hexWithAlpha(candidateColor, 0.35)}`,
+                            }
+                          : undefined
+                      }
+                    >
+                      {/* Left Candidate Color Accent Bar */}
+                      <div
+                        className="w-1.5 shrink-0 self-stretch"
+                        style={{ backgroundColor: candidateColor }}
+                      />
+
+                      {/* Card Body: Thumbnail + Full Info */}
+                      <div className="flex-1 min-w-0 p-2 sm:p-2.5 flex items-center gap-2.5">
+                        {/* Clickable Photo Thumbnail with Symbol Badge overlay */}
+                        <div className="relative shrink-0">
+                          <CandidateThumbnail
+                            candidate={candidate}
+                            showZoomHint
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sounds.playClick();
+                              setLightboxCandidate(candidate);
+                            }}
+                            className="w-[74px] h-[74px] sm:w-[84px] sm:h-[84px] rounded-xl"
+                          />
+                          <span
+                            className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full flex items-center justify-center font-black text-xs text-white font-serif shadow-md border-2 border-white pointer-events-none"
+                            style={{ backgroundColor: candidateColor }}
+                          >
+                            {candidate.symbolNumber}
+                          </span>
+                        </div>
+
+                        {/* Full Non-Truncated Party + Title + Slogan */}
+                        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 text-left">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className="inline-block px-1.5 py-0.5 rounded-md border text-[10px] font-extrabold leading-tight whitespace-normal break-keep"
+                              style={{
+                                color: candidateColor,
+                                borderColor: hexWithAlpha(candidateColor, 0.45),
+                                backgroundColor: hexWithAlpha(candidateColor, 0.1),
+                              }}
+                            >
+                              {displayParty}
+                            </span>
+                          </div>
+
+                          <h3 className="text-[13px] sm:text-sm font-black text-slate-950 whitespace-normal break-keep break-words leading-snug">
+                            {candidate.title}
+                          </h3>
+
+                          {displayDesc && (
+                            <p className="text-[11px] sm:text-xs text-slate-600 whitespace-normal break-keep break-words leading-snug">
+                              {displayDesc}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right Stamp Target Box */}
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectCandidate(candidate.id, e);
+                        }}
+                        className="w-14 sm:w-16 shrink-0 border-l-2 border-slate-200 bg-slate-50/70 flex flex-col items-center justify-center p-1.5 relative"
+                      >
+                        <div
+                          className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full border-2 border-dashed flex items-center justify-center transition-all ${
+                            isSelected
+                              ? 'border-red-600 bg-red-50'
+                              : 'border-slate-300 group-hover:border-red-400 group-hover:bg-red-50/40'
+                          }`}
+                        >
+                          {isSelected ? (
+                            <svg
+                              viewBox="0 0 100 100"
+                              className="w-9 h-9 sm:w-10 sm:h-10 text-[#dc2626] animate-in zoom-in-75 duration-150 filter drop-shadow-[0_1px_2px_rgba(220,38,38,0.3)]"
+                            >
+                              <circle
+                                cx="50"
+                                cy="50"
+                                r="44"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="7"
+                              />
+                              <line
+                                x1="40"
+                                y1="22"
+                                x2="40"
+                                y2="78"
+                                stroke="currentColor"
+                                strokeWidth="8"
+                                strokeLinecap="round"
+                              />
+                              <line
+                                x1="40"
+                                y1="46"
+                                x2="66"
+                                y2="34"
+                                stroke="currentColor"
+                                strokeWidth="8"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          ) : (
+                            <span className="text-[10px] font-bold text-slate-400 group-hover:text-red-500">
+                              기표
+                            </span>
+                          )}
+                        </div>
+                        <span className="mt-0.5 text-[9px] font-bold text-slate-400">
+                          {isSelected ? '날인완료' : '기표란'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* Candidates Table (Unified 4-Column Korean Ballot Grid for text-only polls) */
+            <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden border-2 border-slate-900 bg-white shadow-sm mb-1.5 sm:mb-2.5 rounded-xs">
+              {/* Table Header */}
+              <div className="shrink-0 flex items-stretch bg-slate-100 text-[10px] sm:text-xs font-bold text-slate-700 text-center border-b-2 border-slate-900">
+                <div className="w-1.5 sm:w-2 shrink-0 bg-slate-300" />
+                <div className="w-9 sm:w-11 shrink-0 py-1 sm:py-1.5 border-r-2 border-slate-900 flex items-center justify-center">
+                  기호
+                </div>
               <div className="w-[72px] sm:w-[92px] shrink-0 px-1 py-1 sm:py-1.5 border-r-2 border-slate-900 flex items-center justify-center">
                 정당명
               </div>
@@ -400,6 +568,7 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
               })}
             </div>
           </div>
+          )}
 
           {/* Bottom Security Mark & Seal (Compact) */}
           <div className="relative shrink-0 flex items-center justify-between gap-2 border-t border-slate-300 pt-1.5 sm:pt-2 text-[9.5px] sm:text-[11px] text-slate-500">
@@ -437,6 +606,12 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Photo Preview Lightbox Modal */}
+      <CandidateImageLightbox
+        candidate={lightboxCandidate}
+        onClose={() => setLightboxCandidate(null)}
+      />
     </div>
   );
 };

@@ -22,7 +22,10 @@ import {
   Wand2,
   BarChart3,
   Lock,
+  Camera,
+  X,
 } from 'lucide-react';
+import { compressImageFileToDataUrl } from '../utils/candidateImage';
 
 export const DURATION_OPTIONS = [
   { group: 'short', hours: 1 / 60, label: '1분', display: '1분 후 마감 (테스트용)' },
@@ -385,6 +388,7 @@ interface DraftChoice {
   title: string;
   party: string;
   subtitle: string;
+  imageUrl?: string;
 }
 
 interface CreatePollModalProps {
@@ -502,6 +506,35 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
     setNewChoices(newChoices.filter((_, i) => i !== idx));
   };
 
+  const handleCandidatePhotoUpload = async (
+    idx: number,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    try {
+      const compressedDataUrl = await compressImageFileToDataUrl(file, 240, 0.72);
+      sounds.playClick();
+      setNewChoices((prev) =>
+        prev.map((item, i) =>
+          i === idx ? { ...item, imageUrl: compressedDataUrl } : item
+        )
+      );
+      setFormError(null);
+    } catch (err: any) {
+      setFormError(err?.message || '사진을 불러오는 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleRemoveCandidatePhoto = (idx: number) => {
+    sounds.playClick();
+    setNewChoices((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, imageUrl: undefined } : item))
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
@@ -583,6 +616,7 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
           accentBg: hexes[idx % hexes.length],
           description: finalSubtitle,
           votes: 0,
+          ...(c.imageUrl ? { imageUrl: c.imageUrl } : {}),
         };
       });
 
@@ -804,6 +838,39 @@ export const CreatePollModal: React.FC<CreatePollModalProps> = ({
                     <Wand2 className="w-3 h-3" />
                     <span>🎲 자동 추천</span>
                   </button>
+
+                  {/* Optional Candidate Photo Upload (240x240 JPEG compressed) */}
+                  {choice.imageUrl ? (
+                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-emerald-400/70 shrink-0 group">
+                      <img
+                        src={choice.imageUrl}
+                        alt={`후보 ${idx + 1} 미리보기`}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCandidatePhoto(idx)}
+                        title="첨부 사진 삭제"
+                        className="absolute inset-0 bg-slate-950/65 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label
+                      title="후보 사진 첨부 (선택 사항 · 240×240 자동 압축)"
+                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-emerald-600/30 border border-slate-600 hover:border-emerald-400/50 text-emerald-300 text-[10px] font-bold transition cursor-pointer shrink-0 active:scale-95"
+                    >
+                      <Camera className="w-3 h-3" />
+                      <span>사진</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleCandidatePhotoUpload(idx, e)}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
 
                   {newChoices.length > 2 && (
                     <button

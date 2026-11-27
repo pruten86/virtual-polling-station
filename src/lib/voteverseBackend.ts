@@ -41,6 +41,7 @@ const OWNED_POLLS_STORAGE_KEY = 'voteverse_owned_polls';
 const ADMIN_UNLOCKED_POLLS_KEY = 'voteverse_admin_unlocked_polls';
 
 export const OFFICIAL_PRESET_POLL_IDS = new Set([
+  'poll-winter-snacks',
   'poll-lunch',
   'poll-monday11',
   'poll-dinner',
@@ -157,13 +158,13 @@ export async function initVoteverseSession(): Promise<string | null> {
 let presetSeedPromise: Promise<void> | null = null;
 
 /**
- * Upserts poll_options safely whether or not DB table has optional columns like 'party'.
+ * Upserts poll_options safely whether or not DB table has optional columns like 'party' or 'image_url'.
  */
 async function upsertPollOptionsSafe(
-  rowsWithParty: Array<Record<string, any>>,
+  rowsWithExtras: Array<Record<string, any>>,
   options?: { ignoreDuplicates?: boolean }
 ): Promise<{ error: any }> {
-  if (!isSupabaseConfigured || !supabase || rowsWithParty.length === 0) {
+  if (!isSupabaseConfigured || !supabase || rowsWithExtras.length === 0) {
     return { error: null };
   }
 
@@ -171,15 +172,31 @@ async function upsertPollOptionsSafe(
     ? { onConflict: 'id', ignoreDuplicates: true }
     : { onConflict: 'id' };
 
-  const firstRes = await supabase.from('poll_options').upsert(rowsWithParty, upsertCfg);
-  if (
-    firstRes.error &&
-    ((firstRes.error.message || '').includes('party') ||
-      firstRes.error.code === '42703' ||
-      firstRes.error.code === 'PGRST204')
-  ) {
-    const rowsWithoutParty = rowsWithParty.map(({ party: _p, ...rest }) => rest);
-    return await supabase.from('poll_options').upsert(rowsWithoutParty, upsertCfg);
+  const firstRes = await supabase.from('poll_options').upsert(rowsWithExtras, upsertCfg);
+  if (!firstRes.error) {
+    return { error: null };
+  }
+
+  const isMissingColumnError = (err: any) =>
+    Boolean(
+      err &&
+        (err.code === '42703' ||
+          err.code === 'PGRST204' ||
+          (err.message || '').includes('party') ||
+          (err.message || '').includes('image_url'))
+    );
+
+  if (isMissingColumnError(firstRes.error)) {
+    const rowsWithoutImage = rowsWithExtras.map(({ image_url: _img, ...rest }) => rest);
+    const secondRes = await supabase.from('poll_options').upsert(rowsWithoutImage, upsertCfg);
+    if (!secondRes.error) {
+      return { error: null };
+    }
+    if (isMissingColumnError(secondRes.error)) {
+      const rowsWithoutPartyAndImage = rowsWithoutImage.map(({ party: _p, ...rest }) => rest);
+      return await supabase.from('poll_options').upsert(rowsWithoutPartyAndImage, upsertCfg);
+    }
+    return { error: secondRes.error };
   }
 
   return { error: firstRes.error };
@@ -346,6 +363,7 @@ export async function ensurePollAndOptionsExist(poll: PollStation): Promise<void
         badge_color: c.badgeColor || 'blue',
         accent_bg: c.accentBg || '#3b82f6',
         vote_count: 0,
+        ...(c.imageUrl ? { image_url: c.imageUrl } : {}),
       }));
 
     if (missingOptions.length > 0) {
@@ -528,6 +546,12 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
           accentBg: opt.accent_bg || opt.accentBg || '#3b82f6',
           description: opt.description || subtitle || '',
           votes: Number(opt.vote_count !== undefined ? opt.vote_count : opt.votes) || 0,
+          imageUrl:
+            typeof opt.image_url === 'string' && opt.image_url.trim()
+              ? opt.image_url.trim()
+              : typeof opt.imageUrl === 'string' && opt.imageUrl.trim()
+              ? opt.imageUrl.trim()
+              : undefined,
         });
       });
     }
@@ -564,6 +588,19 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
       );
       const isOfficial = row.category === 'official';
 
+      const localCandById = new Map((localMatch?.candidates || []).map((c) => [c.id, c]));
+      const mergedCustomCandidates =
+        candidates.length > 0
+          ? candidates.map((c) => {
+              const localCand = localCandById.get(c.id);
+              return {
+                ...c,
+                imageUrl: c.imageUrl || localCand?.imageUrl,
+                imageCrop: c.imageCrop || localCand?.imageCrop,
+              };
+            })
+          : localMatch?.candidates || [];
+
       return {
         id: pollIdStr,
         title: row.title,
@@ -581,7 +618,7 @@ export async function fetchVoteversePolls(): Promise<PollStation[]> {
         ownerId: row.owner_id ? String(row.owner_id) : localMatch?.ownerId,
         adminPin: localMatch?.adminPin,
         accessCode: row.access_code ? String(row.access_code) : localMatch?.accessCode,
-        candidates: candidates.length > 0 ? candidates : localMatch?.candidates || [],
+        candidates: mergedCustomCandidates,
       };
     });
 
@@ -650,6 +687,7 @@ function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
         opt.subtitle,
         symbolNumber
       );
+      const localCandMatch = (localMatch?.candidates || []).find((lc) => lc.id === String(opt.id));
       return {
         id: String(opt.id),
         symbolNumber,
@@ -660,6 +698,13 @@ function mapDbPollRowToStation(row: any, optionRows: any[]): PollStation {
         accentBg: opt.accent_bg || opt.accentBg || '#3b82f6',
         description: opt.description || subtitle || '',
         votes: Number(opt.vote_count !== undefined ? opt.vote_count : opt.votes) || 0,
+        imageUrl:
+          typeof opt.image_url === 'string' && opt.image_url.trim()
+            ? opt.image_url.trim()
+            : typeof opt.imageUrl === 'string' && opt.imageUrl.trim()
+            ? opt.imageUrl.trim()
+            : localCandMatch?.imageUrl,
+        imageCrop: localCandMatch?.imageCrop,
       };
     })
     .sort((a, b) => a.symbolNumber - b.symbolNumber);
@@ -839,6 +884,7 @@ export async function createVoteversePoll(pollData: PollStation): Promise<{ succ
     badge_color: c.badgeColor,
     accent_bg: c.accentBg,
     vote_count: c.votes || 0,
+    ...(c.imageUrl ? { image_url: c.imageUrl } : {}),
   }));
 
   const resolvedVisibility = normalizeResultVisibility(pollWithOwner.resultVisibility);

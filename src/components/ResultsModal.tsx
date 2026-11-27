@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Candidate, PollChannelData, ResultVisibility, normalizeResultVisibility } from '../types';
+import {
+  Candidate,
+  PollChannelData,
+  ResultVisibility,
+  normalizeResultVisibility,
+  hasCandidateImage,
+} from '../types';
 import { sounds } from '../sound';
+import { CandidateThumbnail } from './CandidateThumbnail';
 import {
   Award,
   BarChart3,
@@ -608,7 +615,14 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <Award className={`w-6 h-6 shrink-0 ${isClosed ? 'text-emerald-300' : 'text-amber-400'}`} />
+                  {winnerSummary.winners[0] && hasCandidateImage(winnerSummary.winners[0]) ? (
+                    <CandidateThumbnail
+                      candidate={winnerSummary.winners[0]}
+                      className="w-11 h-11 rounded-full border-2 border-amber-400/80 shadow-md"
+                    />
+                  ) : (
+                    <Award className={`w-6 h-6 shrink-0 ${isClosed ? 'text-emerald-300' : 'text-amber-400'}`} />
+                  )}
                   <div className="text-xs min-w-0">
                     <span className={`font-bold ${isClosed ? 'text-emerald-300' : 'text-amber-300'}`}>
                       {isClosed
@@ -682,7 +696,13 @@ export const ResultsModal: React.FC<ResultsModalProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1.5 gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {hasCandidateImage(candidate) && (
+                          <CandidateThumbnail
+                            candidate={candidate}
+                            className="w-10 h-10 sm:w-11 sm:h-11 rounded-lg border border-slate-600/80"
+                          />
+                        )}
                         <span className="w-5 h-5 rounded-md bg-slate-700 flex items-center justify-center text-xs font-bold text-white shrink-0">
                           {candidate.symbolNumber}
                         </span>

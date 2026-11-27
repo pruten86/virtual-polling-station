@@ -666,6 +666,7 @@ export default function App() {
         }
       );
       envResultRef.current.updateBannerTitle(currentPoll.title);
+      envResultRef.current.updateElectionPosterWall(currentPoll.title, candidates);
     }
   }, [candidates, currentPoll, isPollClosedForBoard]);
 

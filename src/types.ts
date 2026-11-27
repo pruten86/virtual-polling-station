@@ -129,6 +129,16 @@ export function normalizeAvatarType(raw: unknown): AvatarType {
   return 'male_1';
 }
 
+export interface CandidateImageCrop {
+  src: string;
+  col: number;
+  row: number;
+  cols: number;
+  rows: number;
+  cropTop: number;
+  cropBottom: number;
+}
+
 export interface Candidate {
   id: string;
   symbolNumber: number;
@@ -139,6 +149,18 @@ export interface Candidate {
   accentBg: string;
   description: string;
   votes: number;
+  imageUrl?: string;
+  imageCrop?: CandidateImageCrop;
+}
+
+export function hasCandidateImage(candidate?: Pick<Candidate, 'imageUrl' | 'imageCrop'> | null): boolean {
+  if (!candidate) return false;
+  return Boolean((candidate.imageUrl && candidate.imageUrl.trim()) || candidate.imageCrop);
+}
+
+export function isPhotoPollCandidates(candidates?: Candidate[] | null): boolean {
+  if (!Array.isArray(candidates) || candidates.length === 0) return false;
+  return candidates.some((c) => hasCandidateImage(c));
 }
 
 export type StationZone = 'desk' | 'booth' | 'box' | 'billboard' | 'exit';

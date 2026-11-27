@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { StationZone } from '../types';
+import { Candidate, StationZone, hasCandidateImage } from '../types';
+import { drawCandidateVisualOnCanvas } from '../utils/candidateImage';
 
 export interface StationLocation {
   zone: StationZone;
@@ -20,6 +21,7 @@ export interface EnvironmentResult {
   ) => void;
   updateBeaconActive: (currentStep: number) => void;
   updateBannerTitle: (title: string, sub?: string) => void;
+  updateElectionPosterWall: (pollTitle: string, candidates: Candidate[]) => void;
   ballotBoxMesh: THREE.Group;
 }
 
@@ -829,6 +831,307 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   const flagMesh = new THREE.Mesh(flagGeo, flagMat);
   flagMesh.position.set(-8.0, 3.8, -8.9);
   sceneGroup.add(flagMesh);
+
+  // ========================================================
+  // 3-B. 3D Election Poster Wall ('후보자 선거 벽보') on Left Wall
+  // Mounted cleanly above left wainscoting (y=1.3), facing +X into the hall
+  // ========================================================
+  const posterWallGroup = new THREE.Group();
+  posterWallGroup.position.set(-10.92, 3.25, -1.8);
+  posterWallGroup.rotation.y = Math.PI / 2;
+
+  const posterBackFrame = new THREE.Mesh(
+    createRoundedPanelGeometry(5.52, 3.38, 0.1, 0.16, 0.03),
+    mediumOakMat
+  );
+  posterBackFrame.position.set(0, 0, -0.02);
+  posterBackFrame.castShadow = true;
+  posterBackFrame.receiveShadow = true;
+  posterWallGroup.add(posterBackFrame);
+
+  const posterInnerTrim = new THREE.Mesh(
+    createRoundedPanelGeometry(5.32, 3.18, 0.06, 0.12, 0.02),
+    lightOakMat
+  );
+  posterInnerTrim.position.set(0, 0, 0.02);
+  posterWallGroup.add(posterInnerTrim);
+
+  // Decorative wooden header plaque above poster board
+  const posterSignTex = createSignTexture('후보자 선거 벽보', '후보별 사진·공약을 확인하세요', '#D97706');
+  const posterSignBack = new THREE.Mesh(
+    createRoundedPanelGeometry(2.05, 0.42, 0.06, 0.08, 0.015),
+    lightOakMat
+  );
+  posterSignBack.position.set(0, 1.88, 0.02);
+  posterSignBack.castShadow = true;
+  posterWallGroup.add(posterSignBack);
+
+  const posterSignFace = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.94, 0.34),
+    new THREE.MeshStandardMaterial({ map: posterSignTex, roughness: 0.65 })
+  );
+  posterSignFace.position.set(0, 1.88, 0.056);
+  posterWallGroup.add(posterSignFace);
+
+  const posterCanvas = document.createElement('canvas');
+  posterCanvas.width = 1280;
+  posterCanvas.height = 760;
+  const posterCtx = posterCanvas.getContext('2d')!;
+  const posterTexture = new THREE.CanvasTexture(posterCanvas);
+  posterTexture.colorSpace = THREE.SRGBColorSpace;
+
+  const posterMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(5.16, 3.04),
+    new THREE.MeshStandardMaterial({
+      map: posterTexture,
+      roughness: 0.72,
+      metalness: 0.0,
+    })
+  );
+  posterMesh.position.set(0, 0, 0.058);
+  posterWallGroup.add(posterMesh);
+
+  sceneGroup.add(posterWallGroup);
+
+  let posterRenderSeq = 0;
+
+  const updateElectionPosterWall = (pollTitle: string, candidates: Candidate[]) => {
+    const seq = ++posterRenderSeq;
+    const W = 1280;
+    const H = 760;
+
+    const paintPosterBoard = async () => {
+      // Warm soft cork/linen poster board background
+      posterCtx.fillStyle = '#F7EFE2';
+      posterCtx.fillRect(0, 0, W, H);
+
+      // Subtle inner bulletin border
+      posterCtx.strokeStyle = '#DFCBB2';
+      posterCtx.lineWidth = 6;
+      posterCtx.beginPath();
+      posterCtx.roundRect(14, 14, W - 28, H - 28, 22);
+      posterCtx.stroke();
+
+      // Header Banner Ribbon
+      posterCtx.fillStyle = '#362820';
+      posterCtx.beginPath();
+      posterCtx.roundRect(30, 26, W - 60, 74, 16);
+      posterCtx.fill();
+
+      posterCtx.fillStyle = '#F6C667';
+      posterCtx.beginPath();
+      posterCtx.roundRect(46, 42, 222, 42, 10);
+      posterCtx.fill();
+
+      posterCtx.fillStyle = '#2B1F19';
+      posterCtx.font = '900 22px "Pretendard", "Noto Sans KR", sans-serif';
+      posterCtx.textAlign = 'center';
+      posterCtx.textBaseline = 'middle';
+      posterCtx.fillText('후보자 선거 벽보', 157, 64);
+
+      posterCtx.fillStyle = '#FFFBF4';
+      posterCtx.font = 'bold 28px "Pretendard", "Noto Sans KR", sans-serif';
+      posterCtx.textAlign = 'left';
+      const trimmedPollTitle =
+        pollTitle.length > 26 ? `${pollTitle.slice(0, 26)}…` : pollTitle;
+      posterCtx.fillText(trimmedPollTitle, 286, 64);
+
+      posterCtx.fillStyle = '#D9C8B8';
+      posterCtx.font = '600 18px "Pretendard", "Noto Sans KR", sans-serif';
+      posterCtx.textAlign = 'right';
+      posterCtx.fillText('보트버스 선거관리위원회', W - 52, 64);
+
+      const list = candidates.slice(0, 10);
+      const count = Math.max(1, list.length);
+      const rows = count <= 4 ? 1 : 2;
+      const cols = rows === 1 ? Math.max(2, count) : Math.ceil(count / 2);
+
+      const padX = 36;
+      const topY = 120;
+      const bottomPad = 28;
+      const gapX = 18;
+      const gapY = 18;
+      const availW = W - padX * 2;
+      const availH = H - topY - bottomPad;
+      const cardW = (availW - gapX * (cols - 1)) / cols;
+      const cardH = (availH - gapY * (rows - 1)) / rows;
+
+      const palette = [
+        '#F59E0B',
+        '#EA580C',
+        '#7C3AED',
+        '#0284C7',
+        '#E11D48',
+        '#78350F',
+        '#CA8A04',
+        '#059669',
+        '#6366F1',
+        '#0D9488',
+      ];
+
+      for (let i = 0; i < list.length; i++) {
+        if (seq !== posterRenderSeq) return;
+        const cand = list[i];
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = padX + col * (cardW + gapX);
+        const y = topY + row * (cardH + gapY);
+        const accent = cand.accentBg || palette[i % palette.length];
+        const hasImg = hasCandidateImage(cand);
+
+        // Paper poster card shadow & body
+        posterCtx.fillStyle = 'rgba(72, 52, 38, 0.14)';
+        posterCtx.beginPath();
+        posterCtx.roundRect(x + 4, y + 5, cardW, cardH, 16);
+        posterCtx.fill();
+
+        posterCtx.fillStyle = '#FFFFFF';
+        posterCtx.beginPath();
+        posterCtx.roundRect(x, y, cardW, cardH, 16);
+        posterCtx.fill();
+
+        posterCtx.strokeStyle = '#E5D5C0';
+        posterCtx.lineWidth = 2.5;
+        posterCtx.stroke();
+
+        // Colored top ribbon bar
+        const ribbonH = rows === 1 ? 56 : 42;
+        posterCtx.save();
+        posterCtx.beginPath();
+        posterCtx.roundRect(x, y, cardW, ribbonH, [16, 16, 0, 0]);
+        posterCtx.fillStyle = accent;
+        posterCtx.fill();
+        posterCtx.restore();
+
+        // Symbol badge text + Party name
+        posterCtx.fillStyle = '#FFFFFF';
+        posterCtx.textAlign = 'left';
+        posterCtx.textBaseline = 'middle';
+        posterCtx.font = `900 ${rows === 1 ? 24 : 20}px "Pretendard", "Noto Sans KR", sans-serif`;
+        posterCtx.fillText(`기호 ${cand.symbolNumber}`, x + 14, y + ribbonH / 2 + 1);
+
+        posterCtx.fillStyle = 'rgba(255,255,255,0.92)';
+        posterCtx.textAlign = 'right';
+        posterCtx.font = `700 ${rows === 1 ? 18 : 15}px "Pretendard", "Noto Sans KR", sans-serif`;
+        const shortParty =
+          cand.party.length > 9 ? `${cand.party.slice(0, 9)}…` : cand.party;
+        posterCtx.fillText(shortParty, x + cardW - 14, y + ribbonH / 2 + 1);
+
+        // Cute red push-pin at top center of poster
+        posterCtx.fillStyle = '#DC5A5A';
+        posterCtx.beginPath();
+        posterCtx.arc(x + cardW / 2, y + 6, 7, 0, Math.PI * 2);
+        posterCtx.fill();
+        posterCtx.fillStyle = 'rgba(255,255,255,0.55)';
+        posterCtx.beginPath();
+        posterCtx.arc(x + cardW / 2 - 2, y + 4, 2.2, 0, Math.PI * 2);
+        posterCtx.fill();
+
+        if (hasImg) {
+          // Photo poster area
+          const imgPad = 12;
+          const imgX = x + imgPad;
+          const imgY = y + ribbonH + 10;
+          const imgW = cardW - imgPad * 2;
+          const imgH = cardH - ribbonH - (rows === 1 ? 116 : 82);
+
+          await drawCandidateVisualOnCanvas(posterCtx, cand, imgX, imgY, imgW, imgH, {
+            radius: 12,
+          });
+          if (seq !== posterRenderSeq) return;
+
+          posterCtx.strokeStyle = 'rgba(15, 23, 42, 0.1)';
+          posterCtx.lineWidth = 2;
+          posterCtx.beginPath();
+          posterCtx.roundRect(imgX, imgY, imgW, imgH, 12);
+          posterCtx.stroke();
+
+          // Candidate title below photo
+          posterCtx.fillStyle = '#1E293B';
+          posterCtx.textAlign = 'center';
+          posterCtx.textBaseline = 'middle';
+          const titleFontSize = rows === 1 ? 26 : 19;
+          posterCtx.font = `900 ${titleFontSize}px "Pretendard", "Noto Sans KR", sans-serif`;
+          const maxChars = rows === 1 ? 14 : 12;
+          const cleanTitle =
+            cand.title.length > maxChars ? `${cand.title.slice(0, maxChars)}…` : cand.title;
+          posterCtx.fillText(cleanTitle, x + cardW / 2, imgY + imgH + (rows === 1 ? 34 : 24));
+
+          // Subtitle / slogan
+          if (cand.subtitle) {
+            posterCtx.fillStyle = '#64748B';
+            posterCtx.font = `600 ${rows === 1 ? 16 : 13}px "Pretendard", "Noto Sans KR", sans-serif`;
+            const maxSub = rows === 1 ? 19 : 16;
+            const cleanSub =
+              cand.subtitle.length > maxSub ? `${cand.subtitle.slice(0, maxSub)}…` : cand.subtitle;
+            posterCtx.fillText(cleanSub, x + cardW / 2, imgY + imgH + (rows === 1 ? 68 : 49));
+          }
+        } else {
+          // Classic Typographic Election Poster Card (for text-only polls)
+          const centerX = x + cardW / 2;
+          const badgeY = y + ribbonH + (rows === 1 ? 120 : 62);
+          const badgeR = rows === 1 ? 58 : 34;
+
+          posterCtx.fillStyle = `${accent}22`;
+          posterCtx.beginPath();
+          posterCtx.arc(centerX, badgeY, badgeR + 10, 0, Math.PI * 2);
+          posterCtx.fill();
+
+          posterCtx.fillStyle = accent;
+          posterCtx.beginPath();
+          posterCtx.arc(centerX, badgeY, badgeR, 0, Math.PI * 2);
+          posterCtx.fill();
+
+          posterCtx.fillStyle = '#FFFFFF';
+          posterCtx.textAlign = 'center';
+          posterCtx.textBaseline = 'middle';
+          posterCtx.font = `900 ${rows === 1 ? 48 : 30}px "Pretendard", sans-serif`;
+          posterCtx.fillText(`${cand.symbolNumber}`, centerX, badgeY + 2);
+
+          // Wrapped candidate title
+          posterCtx.fillStyle = '#1E293B';
+          posterCtx.font = `900 ${rows === 1 ? 28 : 20}px "Pretendard", "Noto Sans KR", sans-serif`;
+          const maxLineW = cardW - 32;
+          const words = cand.title.split(' ');
+          const lines: string[] = [];
+          let cur = '';
+          for (const w of words) {
+            const test = cur ? `${cur} ${w}` : w;
+            if (posterCtx.measureText(test).width > maxLineW && cur) {
+              lines.push(cur);
+              cur = w;
+            } else {
+              cur = test;
+            }
+          }
+          if (cur) lines.push(cur);
+
+          const titleStartY = badgeY + badgeR + (rows === 1 ? 52 : 34);
+          lines.slice(0, 2).forEach((ln, li) => {
+            posterCtx.fillText(ln, centerX, titleStartY + li * (rows === 1 ? 34 : 24));
+          });
+
+          if (cand.subtitle) {
+            posterCtx.fillStyle = '#64748B';
+            posterCtx.font = `600 ${rows === 1 ? 18 : 14}px "Pretendard", "Noto Sans KR", sans-serif`;
+            const subTrim =
+              cand.subtitle.length > 20 ? `${cand.subtitle.slice(0, 20)}…` : cand.subtitle;
+            posterCtx.fillText(
+              subTrim,
+              centerX,
+              titleStartY + Math.min(2, lines.length) * (rows === 1 ? 34 : 24) + 18
+            );
+          }
+        }
+      }
+
+      if (seq === posterRenderSeq) {
+        posterTexture.needsUpdate = true;
+      }
+    };
+
+    void paintPosterBoard();
+  };
 
   // ========================================================
   // 4. Floor Directional Guidance Strip (Warm Cream & Sage)
@@ -1837,6 +2140,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     updateBillboardTexture,
     updateBeaconActive,
     updateBannerTitle,
+    updateElectionPosterWall,
     ballotBoxMesh,
   };
 }
