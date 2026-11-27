@@ -219,6 +219,12 @@ export default function App() {
     currentPollRef.current = currentPoll;
   }, [currentPoll]);
 
+  const isWinterTheme = currentPoll.id === 'poll-winter-snacks';
+  const isWinterThemeRef = useRef<boolean>(isWinterTheme);
+  useEffect(() => {
+    isWinterThemeRef.current = isWinterTheme;
+  }, [isWinterTheme]);
+
   // Official Channel system state ("온라인 갓바위" 방식 100명 단위 자동 증설)
   const [officialChannelState, setOfficialChannelState] = useState<{
     activeChannelIndex: number;
@@ -667,8 +673,14 @@ export default function App() {
       );
       envResultRef.current.updateBannerTitle(currentPoll.title);
       envResultRef.current.updateElectionPosterWall(currentPoll.title, candidates);
+      envResultRef.current.setWinterTheme(isWinterTheme);
     }
-  }, [candidates, currentPoll, isPollClosedForBoard]);
+    playerRef.current?.setWinterTheme(isWinterTheme);
+    npcRef.current?.setWinterTheme(isWinterTheme);
+    for (const entry of remoteAvatarsRef.current.values()) {
+      entry.controller.setWinterTheme(isWinterTheme);
+    }
+  }, [candidates, currentPoll, isPollClosedForBoard, isWinterTheme]);
 
   // Show quick toast notification
   const showToast = useCallback((msg: string) => {
@@ -721,7 +733,11 @@ export default function App() {
         if (!hasValidCoords) return;
 
         const safeRotY = Number.isFinite(parsedRotY) ? parsedRotY : 0;
-        const controller = createProceduralAvatar(normalizedPeerAvatar, peer.userId);
+        const controller = createProceduralAvatar(
+          normalizedPeerAvatar,
+          peer.userId,
+          isWinterThemeRef.current
+        );
         controller.group.position.set(parsedX, 0, parsedZ);
         controller.lookAtAngle(safeRotY);
 
@@ -761,7 +777,11 @@ export default function App() {
             sceneRef.current.remove(existing.controller.group);
           }
 
-          const nextController = createProceduralAvatar(normalizedPeerAvatar, peer.userId);
+          const nextController = createProceduralAvatar(
+            normalizedPeerAvatar,
+            peer.userId,
+            isWinterThemeRef.current
+          );
           nextController.group.position.copy(prevPos);
           nextController.lookAtAngle(prevRotY);
           nextController.group.add(existing.nameTag);
@@ -1347,18 +1367,19 @@ export default function App() {
 
     // 5. Build Polling Station Architecture
     const envResult = buildPollingStationEnvironment();
+    envResult.setWinterTheme(isWinterThemeRef.current);
     scene.add(envResult.sceneGroup);
     envResultRef.current = envResult;
 
     // 6. Spawn Procedural Player Avatar at Entrance (with unique ±0.7m offset)
-    const playerAvatar = createProceduralAvatar(avatarType);
+    const playerAvatar = createProceduralAvatar(avatarType, undefined, isWinterThemeRef.current);
     playerAvatar.group.position.set(spawnPos.x, 0, spawnPos.z);
     playerAvatar.lookAtAngle(Math.PI); // Facing towards verification desk (-Z)
     scene.add(playerAvatar.group);
     playerRef.current = playerAvatar;
 
     // 7. Spawn Verification Desk NPC Officer (Directly behind the desk at X=-6.5, Z=-5.2, facing +Z)
-    const npcAvatar = createProceduralAvatar('npc');
+    const npcAvatar = createProceduralAvatar('npc', undefined, isWinterThemeRef.current);
     npcAvatar.group.position.set(-6.5, 0, -5.2);
     npcAvatar.lookAtAngle(0);
     scene.add(npcAvatar.group);
@@ -1619,6 +1640,9 @@ export default function App() {
         }
       }
 
+      // Animate seasonal environment effects (e.g., falling snow outside winter windows & fairy lights)
+      envResultRef.current?.update(delta);
+
       renderer.render(scene, camera);
       frameId = requestAnimationFrame(tick);
     };
@@ -1654,7 +1678,7 @@ export default function App() {
       const oldRot = playerRef.current.group.rotation.y;
       sceneRef.current.remove(playerRef.current.group);
 
-      const newAvatar = createProceduralAvatar(avatarType);
+      const newAvatar = createProceduralAvatar(avatarType, undefined, isWinterThemeRef.current);
       newAvatar.group.position.copy(oldPos);
       newAvatar.lookAtAngle(oldRot);
       sceneRef.current.add(newAvatar.group);

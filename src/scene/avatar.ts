@@ -8,6 +8,7 @@ export interface CharacterController {
   update: (isMoving: boolean, dt: number, speed: number) => void;
   lookAtAngle: (angle: number) => void;
   triggerEmote: (emojiOrId: string, text?: string, emoteId?: EmoteId) => void;
+  setWinterTheme: (enabled: boolean) => void;
   type: AvatarType | 'npc';
 }
 
@@ -256,12 +257,98 @@ interface MicroParticle {
   baseScale: number;
 }
 
+interface WinterOutfitSpec {
+  coat: number;
+  scarf: number;
+  scarfStripe: number;
+  furTrim: number;
+  headwearKind: 'beanie' | 'beret' | 'earmuffs' | 'none';
+  headwearMain: number;
+  headwearAccent: number;
+  toggleWood: number;
+}
+
+const WINTER_OUTFIT_SPECS: Record<AvatarType | 'npc', WinterOutfitSpec> = {
+  male_1: {
+    coat: 0xb58143, // Warm camel-mustard winter duffle coat
+    scarf: 0xba434b, // Deep cranberry knit scarf
+    scarfStripe: 0xf7eee2,
+    furTrim: 0xf7f1e7,
+    headwearKind: 'beanie',
+    headwearMain: 0xf3e8d8, // Warm cream ribbed beanie
+    headwearAccent: 0xba434b, // Cranberry cuff & pom-pom
+    toggleWood: 0x5c3d28,
+  },
+  male_2: {
+    coat: 0x4b7d6a, // Deep pine-sage padded wool coat
+    scarf: 0xf6ecde, // Soft oatmeal-cream knit scarf
+    scarfStripe: 0xc95555,
+    furTrim: 0xf7f2ea,
+    headwearKind: 'beanie',
+    headwearMain: 0x3b6653, // Forest knit beanie
+    headwearAccent: 0xf6ecde, // Cream cuff & pom-pom
+    toggleWood: 0x5a4030,
+  },
+  male_3: {
+    coat: 0x4c6887, // Classic dusty-navy wool coat
+    scarf: 0xdfa642, // Warm mustard-gold knit scarf
+    scarfStripe: 0x36475e,
+    furTrim: 0xf5ede2,
+    headwearKind: 'beanie',
+    headwearMain: 0x3b485e, // Charcoal-navy knit beanie
+    headwearAccent: 0xdfa642, // Mustard-gold cuff & pom-pom
+    toggleWood: 0x61422c,
+  },
+  female_1: {
+    coat: 0xd97d6f, // Cozy coral-terracotta winter coat
+    scarf: 0xf9f1e6, // Fluffy cream knit scarf
+    scarfStripe: 0xd05c69,
+    furTrim: 0xfdf8f2,
+    headwearKind: 'beret',
+    headwearMain: 0xc94e5f, // Warm berry clay beret
+    headwearAccent: 0xfbf4ea, // Fluffy cream pom-pom
+    toggleWood: 0x734d38,
+  },
+  female_2: {
+    coat: 0x5a8c6b, // Cozy forest-mint wool coat
+    scarf: 0xc94b53, // Festive crimson knit scarf
+    scarfStripe: 0xf9f2e7,
+    furTrim: 0xfaf4ec,
+    headwearKind: 'earmuffs', // Clears low bun 100%!
+    headwearMain: 0xfaf3e8, // Plush cream muffs
+    headwearAccent: 0xc94b53, // Crimson curved headband
+    toggleWood: 0x6b4730,
+  },
+  female_3: {
+    coat: 0x9c82ba, // Soft plum-lavender wool coat
+    scarf: 0xf8e7c5, // Warm butter-cream knit scarf
+    scarfStripe: 0xb56888,
+    furTrim: 0xfdf8f2,
+    headwearKind: 'beret',
+    headwearMain: 0xf5e4be, // Butter-cream tilted beret
+    headwearAccent: 0xb58cd4, // Soft lavender pom-pom
+    toggleWood: 0x6c4c38,
+  },
+  npc: {
+    coat: 0x4c7a62,
+    scarf: 0xc94f56, // Festive red clerk scarf
+    scarfStripe: 0xfaf3e6,
+    furTrim: 0xfaf5ec,
+    headwearKind: 'none',
+    headwearMain: 0xc94f56,
+    headwearAccent: 0xfaf3e6,
+    toggleWood: 0x5c3d28,
+  },
+};
+
 export function createProceduralAvatar(
   rawType: AvatarType | 'male' | 'female' | 'npc',
-  _colorSeed?: string
+  _colorSeed?: string,
+  initialWinterTheme = false
 ): CharacterController {
   const type: AvatarType | 'npc' = rawType === 'npc' ? 'npc' : normalizeAvatarType(rawType);
   const spec = AVATAR_SPECS[type];
+  const winterSpec = WINTER_OUTFIT_SPECS[type];
 
   const group = new THREE.Group();
   group.name = `avatar_${type}`;
@@ -974,6 +1061,269 @@ export function createProceduralAvatar(
   torsoGroup.add(rightArm);
 
   // ========================================================
+  // Cozy Clay Winter Outfit Layer (Activated ONLY in 'poll-winter-snacks')
+  // Modularly attached to torsoGroup, headGroup, leftElbow, and rightElbow
+  // so 2-segment arms, sculpted open clay hands, 3-clap sync, hair & glasses stay 100% crisp.
+  // ========================================================
+  const winterCoatMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.coat,
+    roughness: 0.86,
+    metalness: 0.0,
+  });
+  const winterScarfMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.scarf,
+    roughness: 0.88,
+    metalness: 0.0,
+  });
+  const winterScarfStripeMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.scarfStripe,
+    roughness: 0.86,
+    metalness: 0.0,
+  });
+  const winterFurMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.furTrim,
+    roughness: 0.92,
+    metalness: 0.0,
+  });
+  const winterHeadMainMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.headwearMain,
+    roughness: 0.86,
+    metalness: 0.0,
+  });
+  const winterHeadAccentMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.headwearAccent,
+    roughness: 0.88,
+    metalness: 0.0,
+  });
+  const winterToggleMat = new THREE.MeshStandardMaterial({
+    color: winterSpec.toggleWood,
+    roughness: 0.68,
+    metalness: 0.0,
+  });
+
+  // 1) Torso Winter Coat Overlay + Wooden Duffle Toggles + Fluffy Hem + Knitted Scarf
+  const winterTorsoGroup = new THREE.Group();
+  winterTorsoGroup.name = 'winterTorsoGroup';
+  torsoGroup.add(winterTorsoGroup);
+
+  if (type !== 'npc') {
+    // Soft clay winter wool coat shell hugging torso cleanly
+    const coatBody = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.203, 0.175, 10, 20),
+      winterCoatMat
+    );
+    coatBody.scale.set(1.08, 1.0, 0.90);
+    coatBody.position.y = 0.228;
+    coatBody.castShadow = true;
+    coatBody.receiveShadow = true;
+    winterTorsoGroup.add(coatBody);
+
+    // Cozy front duffle-coat wooden toggle buttons
+    const toggleGeo = new THREE.CapsuleGeometry(0.012, 0.036, 6, 10);
+    const loopGeo = new THREE.BoxGeometry(0.064, 0.012, 0.012);
+    [0.295, 0.205, 0.115].forEach((ty) => {
+      const loop = new THREE.Mesh(loopGeo, winterFurMat);
+      loop.position.set(0, ty, 0.184);
+      winterTorsoGroup.add(loop);
+
+      const toggle = new THREE.Mesh(toggleGeo, winterToggleMat);
+      toggle.rotation.z = Math.PI / 2;
+      toggle.position.set(0, ty, 0.193);
+      winterTorsoGroup.add(toggle);
+    });
+
+    // Fluffy winter trim along coat hem (matches dress skirt hem for female_3)
+    if (spec.outfitKind === 'lavenderDress') {
+      const coatSkirtHem = new THREE.Mesh(
+        new THREE.TorusGeometry(0.252, 0.034, 10, 24),
+        winterFurMat
+      );
+      coatSkirtHem.rotation.x = Math.PI / 2;
+      coatSkirtHem.scale.set(1.04, 0.9, 1.0);
+      coatSkirtHem.position.y = -0.135;
+      winterTorsoGroup.add(coatSkirtHem);
+    } else {
+      const coatHem = new THREE.Mesh(
+        new THREE.TorusGeometry(0.194, 0.038, 10, 22),
+        winterFurMat
+      );
+      coatHem.rotation.x = Math.PI / 2;
+      coatHem.scale.set(1.07, 0.88, 1.0);
+      coatHem.position.y = 0.045;
+      winterTorsoGroup.add(coatHem);
+    }
+  }
+
+  // Knitted neck scarf wrap (sits snugly below chin, never clips head or blush)
+  const scarfWrap = new THREE.Mesh(
+    new THREE.TorusGeometry(0.146, 0.048, 12, 24),
+    winterScarfMat
+  );
+  scarfWrap.rotation.x = Math.PI / 2;
+  scarfWrap.scale.set(1.08, 1.0, 0.94);
+  scarfWrap.position.set(0, 0.448, 0.008);
+  scarfWrap.castShadow = true;
+  winterTorsoGroup.add(scarfWrap);
+
+  // Accent knit stripe around neck scarf
+  const scarfAccentRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.156, 0.016, 8, 22),
+    winterScarfStripeMat
+  );
+  scarfAccentRing.rotation.x = Math.PI / 2;
+  scarfAccentRing.scale.set(1.08, 1.0, 0.94);
+  scarfAccentRing.position.set(0, 0.445, 0.01);
+  winterTorsoGroup.add(scarfAccentRing);
+
+  // Draped front scarf tail with cute stripe & fringe tassels
+  const scarfTailGroup = new THREE.Group();
+  scarfTailGroup.position.set(0.075, 0.305, 0.186);
+  scarfTailGroup.rotation.set(-0.08, 0.14, -0.14);
+
+  const scarfTail = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.044, 0.135, 8, 14),
+    winterScarfMat
+  );
+  scarfTail.scale.set(1.12, 1.0, 0.44);
+  scarfTail.castShadow = true;
+  scarfTailGroup.add(scarfTail);
+
+  const tailStripe = new THREE.Mesh(
+    new THREE.BoxGeometry(0.095, 0.022, 0.042),
+    winterScarfStripeMat
+  );
+  tailStripe.position.set(0, -0.042, 0.002);
+  scarfTailGroup.add(tailStripe);
+
+  [-0.03, 0, 0.03].forEach((fx) => {
+    const tassel = new THREE.Mesh(
+      new THREE.SphereGeometry(0.013, 8, 6),
+      winterScarfStripeMat
+    );
+    tassel.position.set(fx, -0.112, 0);
+    scarfTailGroup.add(tassel);
+  });
+  winterTorsoGroup.add(scarfTailGroup);
+
+  // 2) Fluffy Winter Wrist Cuffs (cleanly above open clay hands so fingers & 3-clap stay 100% clear)
+  const wristCuffGeo = new THREE.TorusGeometry(0.052, 0.022, 10, 18);
+  const leftWinterCuff = new THREE.Mesh(wristCuffGeo, winterFurMat);
+  leftWinterCuff.rotation.x = Math.PI / 2;
+  leftWinterCuff.position.set(0, -0.132, 0);
+  leftElbow.add(leftWinterCuff);
+
+  const rightWinterCuff = new THREE.Mesh(wristCuffGeo, winterFurMat);
+  rightWinterCuff.rotation.x = Math.PI / 2;
+  rightWinterCuff.position.set(0, -0.132, 0);
+  rightElbow.add(rightWinterCuff);
+
+  // 3) Hairstyle-Tailored Winter Headwear (Beanie / Beret / Earmuffs — zero hair or glasses clipping)
+  const winterHeadGroup = new THREE.Group();
+  winterHeadGroup.name = 'winterHeadGroup';
+  headGroup.add(winterHeadGroup);
+
+  if (winterSpec.headwearKind === 'beanie') {
+    const beanieGroup = new THREE.Group();
+    beanieGroup.position.set(0, 0.195, -0.028);
+    beanieGroup.rotation.x = -0.15;
+
+    // Ribbed folded cuff (clears forehead bangs & male_3 glasses)
+    const cuff = new THREE.Mesh(
+      new THREE.TorusGeometry(0.288, 0.056, 12, 26),
+      winterHeadAccentMat
+    );
+    cuff.rotation.x = Math.PI / 2;
+    cuff.scale.set(1.06, 1.04, 1.0);
+    cuff.castShadow = true;
+    beanieGroup.add(cuff);
+
+    // Rounded knit beanie dome
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(0.296, 22, 16, 0, Math.PI * 2, 0, Math.PI * 0.6),
+      winterHeadMainMat
+    );
+    dome.scale.set(1.04, 0.94, 1.03);
+    dome.position.y = -0.015;
+    dome.castShadow = true;
+    beanieGroup.add(dome);
+
+    // Cute fluffy pom-pom topper
+    const pom = new THREE.Mesh(
+      new THREE.SphereGeometry(0.088, 16, 12),
+      winterHeadAccentMat
+    );
+    pom.position.set(0, 0.285, -0.01);
+    pom.castShadow = true;
+    beanieGroup.add(pom);
+
+    winterHeadGroup.add(beanieGroup);
+  } else if (winterSpec.headwearKind === 'beret') {
+    const beretGroup = new THREE.Group();
+    beretGroup.position.set(-0.015, 0.235, -0.032);
+    beretGroup.rotation.set(-0.14, 0, 0.16);
+
+    const band = new THREE.Mesh(
+      new THREE.TorusGeometry(0.276, 0.04, 10, 24),
+      winterHeadMainMat
+    );
+    band.rotation.x = Math.PI / 2;
+    band.scale.set(1.04, 1.02, 1.0);
+    beretGroup.add(band);
+
+    const beretCrown = new THREE.Mesh(
+      new THREE.SphereGeometry(0.32, 22, 16),
+      winterHeadMainMat
+    );
+    beretCrown.scale.set(1.12, 0.44, 1.08);
+    beretCrown.position.set(-0.02, 0.095, -0.01);
+    beretCrown.castShadow = true;
+    beretGroup.add(beretCrown);
+
+    const beretPom = new THREE.Mesh(
+      new THREE.SphereGeometry(0.068, 14, 12),
+      winterHeadAccentMat
+    );
+    beretPom.position.set(-0.035, 0.235, -0.015);
+    beretPom.castShadow = true;
+    beretGroup.add(beretPom);
+
+    winterHeadGroup.add(beretGroup);
+  } else if (winterSpec.headwearKind === 'earmuffs') {
+    // Curved headband spanning cleanly over crown (100% clear of female_2's low bun!)
+    const headband = new THREE.Mesh(
+      new THREE.TorusGeometry(0.328, 0.028, 10, 26, Math.PI),
+      winterHeadAccentMat
+    );
+    headband.position.set(0, 0.055, -0.012);
+    headband.castShadow = true;
+    winterHeadGroup.add(headband);
+
+    // Big plush fluffy clay ear muffs over both ears
+    const muffGeo = new THREE.SphereGeometry(0.114, 16, 14);
+    const hubGeo = new THREE.SphereGeometry(0.052, 12, 10);
+    [-1, 1].forEach((side) => {
+      const muff = new THREE.Mesh(muffGeo, winterHeadMainMat);
+      muff.scale.set(0.68, 1.04, 1.04);
+      muff.position.set(side * 0.328, -0.01, -0.012);
+      muff.castShadow = true;
+      winterHeadGroup.add(muff);
+
+      const hub = new THREE.Mesh(hubGeo, winterHeadAccentMat);
+      hub.scale.set(0.55, 1.0, 1.0);
+      hub.position.set(side * 0.378, -0.01, -0.012);
+      winterHeadGroup.add(hub);
+    });
+  }
+
+  const setWinterTheme = (enabled: boolean) => {
+    winterTorsoGroup.visible = enabled;
+    winterHeadGroup.visible = enabled;
+    leftWinterCuff.visible = enabled;
+    rightWinterCuff.visible = enabled;
+  };
+  setWinterTheme(initialWinterTheme);
+
+  // ========================================================
   // Pre-Allocated Micro 3D Pastel Particle Pool (Clap Sparkles/Rings & Jump Confetti)
   // Zero per-frame GPU/GC allocations!
   // ========================================================
@@ -1680,6 +2030,7 @@ export function createProceduralAvatar(
     update,
     lookAtAngle,
     triggerEmote,
+    setWinterTheme,
     type,
   };
 }

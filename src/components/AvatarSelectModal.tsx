@@ -770,21 +770,27 @@ export const AvatarSelectModal: React.FC<AvatarSelectModalProps> = ({
                         </p>
                       </div>
 
-                      {/* Photo Poll Mini Preview Strip (4 cute thumbnails + remaining count) */}
+                      {/* Photo Poll Full Preview Grid (All candidates: 4x2 on mobile, 8x1 on desktop) */}
                       {isPhotoPollCandidates(poll.candidates) && (
-                        <div className="flex items-center gap-1.5 pt-0.5">
-                          {poll.candidates.slice(0, 4).map((cand) => (
-                            <CandidateThumbnail
-                              key={cand.id}
-                              candidate={cand}
-                              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg border border-slate-600/80"
-                            />
-                          ))}
-                          {poll.candidates.length > 4 && (
-                            <span className="inline-flex items-center justify-center h-9 sm:h-10 px-2 rounded-lg bg-slate-800/90 border border-slate-700 text-[10px] font-bold text-amber-200">
-                              +{poll.candidates.length - 4}종
-                            </span>
-                          )}
+                        <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 pt-1">
+                          {poll.candidates.map((cand) => {
+                            const shortLabel = cand.title.split('(')[0].trim() || cand.title;
+                            return (
+                              <div
+                                key={cand.id}
+                                title={cand.title}
+                                className="flex flex-col items-center gap-1 min-w-0"
+                              >
+                                <CandidateThumbnail
+                                  candidate={cand}
+                                  className="aspect-square w-full rounded-lg overflow-hidden border border-slate-600/80"
+                                />
+                                <span className="text-[9.5px] sm:text-[10px] font-semibold text-slate-300 leading-tight text-center whitespace-normal break-keep w-full">
+                                  {shortLabel}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
 

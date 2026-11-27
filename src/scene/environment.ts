@@ -22,6 +22,8 @@ export interface EnvironmentResult {
   updateBeaconActive: (currentStep: number) => void;
   updateBannerTitle: (title: string, sub?: string) => void;
   updateElectionPosterWall: (pollTitle: string, candidates: Candidate[]) => void;
+  setWinterTheme: (enabled: boolean) => void;
+  update: (dt: number) => void;
   ballotBoxMesh: THREE.Group;
 }
 
@@ -707,20 +709,23 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   cornerMintPartition.position.set(9.2, 0, -6.4);
   sceneGroup.add(cornerMintPartition);
 
-  // Miniature Clay Potted Plants tucked into non-walkable corners
+  // Miniature Clay Potted Plants tucked into non-walkable corners (swapped for snowy fir trees in winter theme)
+  const defaultPlantsGroup = new THREE.Group();
+  sceneGroup.add(defaultPlantsGroup);
+
   const plantBackLeft = createClayPottedPlant();
   plantBackLeft.position.set(-9.9, 0, -7.9);
-  sceneGroup.add(plantBackLeft);
+  defaultPlantsGroup.add(plantBackLeft);
 
   const plantBackRight = createClayPottedPlant();
   plantBackRight.position.set(9.7, 0, -7.8);
   plantBackRight.scale.setScalar(1.08);
-  sceneGroup.add(plantBackRight);
+  defaultPlantsGroup.add(plantBackRight);
 
   const plantFrontLeft = createClayPottedPlant();
   plantFrontLeft.position.set(-9.8, 0, 7.6);
   plantFrontLeft.scale.setScalar(0.95);
-  sceneGroup.add(plantFrontLeft);
+  defaultPlantsGroup.add(plantFrontLeft);
 
   // ========================================================
   // 3. Overhead Grand Banner with Dynamic Title
@@ -833,45 +838,46 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   sceneGroup.add(flagMesh);
 
   // ========================================================
-  // 3-B. 3D Election Poster Wall ('후보자 선거 벽보') on Left Wall
-  // Mounted cleanly above left wainscoting (y=1.3), facing +X into the hall
+  // 3-B. Central Floor Election Poster Mat ('바닥형 후보자 선거 벽보')
+  // Placed cleanly in the central open walkway (X=-0.5, Z=0.15), zero Z-fighting,
+  // completely clear of all 4 station beacons, furniture, and the floor guidance strip.
   // ========================================================
-  const posterWallGroup = new THREE.Group();
-  posterWallGroup.position.set(-10.92, 3.25, -1.8);
-  posterWallGroup.rotation.y = Math.PI / 2;
+  const floorPosterGroup = new THREE.Group();
+  floorPosterGroup.position.set(-0.5, 0.018, 0.15);
 
-  const posterBackFrame = new THREE.Mesh(
-    createRoundedPanelGeometry(5.52, 3.38, 0.1, 0.16, 0.03),
-    mediumOakMat
+  // Outer warm light-oak rounded mat frame
+  const floorPosterOuterFrame = new THREE.Mesh(
+    new THREE.ShapeGeometry(createRoundedRectShape(6.52, 4.02, 0.28), 14),
+    new THREE.MeshStandardMaterial({
+      color: 0xd9b68c,
+      roughness: 0.78,
+      metalness: 0.0,
+      polygonOffset: true,
+      polygonOffsetFactor: -1.4,
+      polygonOffsetUnits: -1.4,
+    })
   );
-  posterBackFrame.position.set(0, 0, -0.02);
-  posterBackFrame.castShadow = true;
-  posterBackFrame.receiveShadow = true;
-  posterWallGroup.add(posterBackFrame);
+  floorPosterOuterFrame.rotation.x = -Math.PI / 2;
+  floorPosterOuterFrame.position.y = -0.004;
+  floorPosterOuterFrame.receiveShadow = true;
+  floorPosterGroup.add(floorPosterOuterFrame);
 
-  const posterInnerTrim = new THREE.Mesh(
-    createRoundedPanelGeometry(5.32, 3.18, 0.06, 0.12, 0.02),
-    lightOakMat
+  // Soft ivory inner trim frame
+  const floorPosterInnerFrame = new THREE.Mesh(
+    new THREE.ShapeGeometry(createRoundedRectShape(6.34, 3.84, 0.22), 14),
+    new THREE.MeshStandardMaterial({
+      color: 0xfffbf3,
+      roughness: 0.85,
+      metalness: 0.0,
+      polygonOffset: true,
+      polygonOffsetFactor: -1.8,
+      polygonOffsetUnits: -1.8,
+    })
   );
-  posterInnerTrim.position.set(0, 0, 0.02);
-  posterWallGroup.add(posterInnerTrim);
-
-  // Decorative wooden header plaque above poster board
-  const posterSignTex = createSignTexture('후보자 선거 벽보', '후보별 사진·공약을 확인하세요', '#D97706');
-  const posterSignBack = new THREE.Mesh(
-    createRoundedPanelGeometry(2.05, 0.42, 0.06, 0.08, 0.015),
-    lightOakMat
-  );
-  posterSignBack.position.set(0, 1.88, 0.02);
-  posterSignBack.castShadow = true;
-  posterWallGroup.add(posterSignBack);
-
-  const posterSignFace = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.94, 0.34),
-    new THREE.MeshStandardMaterial({ map: posterSignTex, roughness: 0.65 })
-  );
-  posterSignFace.position.set(0, 1.88, 0.056);
-  posterWallGroup.add(posterSignFace);
+  floorPosterInnerFrame.rotation.x = -Math.PI / 2;
+  floorPosterInnerFrame.position.y = -0.002;
+  floorPosterInnerFrame.receiveShadow = true;
+  floorPosterGroup.add(floorPosterInnerFrame);
 
   const posterCanvas = document.createElement('canvas');
   posterCanvas.width = 1280;
@@ -879,19 +885,25 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
   const posterCtx = posterCanvas.getContext('2d')!;
   const posterTexture = new THREE.CanvasTexture(posterCanvas);
   posterTexture.colorSpace = THREE.SRGBColorSpace;
+  posterTexture.anisotropy = 8;
 
   const posterMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(5.16, 3.04),
+    new THREE.PlaneGeometry(6.16, 3.66),
     new THREE.MeshStandardMaterial({
       map: posterTexture,
-      roughness: 0.72,
+      roughness: 0.82,
       metalness: 0.0,
+      polygonOffset: true,
+      polygonOffsetFactor: -2.4,
+      polygonOffsetUnits: -2.4,
     })
   );
-  posterMesh.position.set(0, 0, 0.058);
-  posterWallGroup.add(posterMesh);
+  posterMesh.rotation.x = -Math.PI / 2;
+  posterMesh.position.y = 0;
+  posterMesh.receiveShadow = true;
+  floorPosterGroup.add(posterMesh);
 
-  sceneGroup.add(posterWallGroup);
+  sceneGroup.add(floorPosterGroup);
 
   let posterRenderSeq = 0;
 
@@ -901,11 +913,11 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     const H = 760;
 
     const paintPosterBoard = async () => {
-      // Warm soft cork/linen poster board background
-      posterCtx.fillStyle = '#F7EFE2';
+      // Warm soft parchment/linen floor exhibit mat background
+      posterCtx.fillStyle = '#FBF5EA';
       posterCtx.fillRect(0, 0, W, H);
 
-      // Subtle inner bulletin border
+      // Crisp inner decorative border
       posterCtx.strokeStyle = '#DFCBB2';
       posterCtx.lineWidth = 6;
       posterCtx.beginPath();
@@ -915,42 +927,42 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
       // Header Banner Ribbon
       posterCtx.fillStyle = '#362820';
       posterCtx.beginPath();
-      posterCtx.roundRect(30, 26, W - 60, 74, 16);
+      posterCtx.roundRect(28, 24, W - 56, 74, 16);
       posterCtx.fill();
 
       posterCtx.fillStyle = '#F6C667';
       posterCtx.beginPath();
-      posterCtx.roundRect(46, 42, 222, 42, 10);
+      posterCtx.roundRect(44, 40, 228, 42, 10);
       posterCtx.fill();
 
       posterCtx.fillStyle = '#2B1F19';
       posterCtx.font = '900 22px "Pretendard", "Noto Sans KR", sans-serif';
       posterCtx.textAlign = 'center';
       posterCtx.textBaseline = 'middle';
-      posterCtx.fillText('후보자 선거 벽보', 157, 64);
+      posterCtx.fillText('후보자 선거 벽보', 158, 62);
 
       posterCtx.fillStyle = '#FFFBF4';
       posterCtx.font = 'bold 28px "Pretendard", "Noto Sans KR", sans-serif';
       posterCtx.textAlign = 'left';
       const trimmedPollTitle =
         pollTitle.length > 26 ? `${pollTitle.slice(0, 26)}…` : pollTitle;
-      posterCtx.fillText(trimmedPollTitle, 286, 64);
+      posterCtx.fillText(trimmedPollTitle, 290, 62);
 
       posterCtx.fillStyle = '#D9C8B8';
       posterCtx.font = '600 18px "Pretendard", "Noto Sans KR", sans-serif';
       posterCtx.textAlign = 'right';
-      posterCtx.fillText('보트버스 선거관리위원회', W - 52, 64);
+      posterCtx.fillText('보트버스 선거관리위원회', W - 50, 62);
 
       const list = candidates.slice(0, 10);
       const count = Math.max(1, list.length);
       const rows = count <= 4 ? 1 : 2;
       const cols = rows === 1 ? Math.max(2, count) : Math.ceil(count / 2);
 
-      const padX = 36;
-      const topY = 120;
-      const bottomPad = 28;
-      const gapX = 18;
-      const gapY = 18;
+      const padX = 32;
+      const topY = 114;
+      const bottomPad = 26;
+      const gapX = 16;
+      const gapY = 16;
       const availW = W - padX * 2;
       const availH = H - topY - bottomPad;
       const cardW = (availW - gapX * (cols - 1)) / cols;
@@ -1007,7 +1019,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
         posterCtx.fillStyle = '#FFFFFF';
         posterCtx.textAlign = 'left';
         posterCtx.textBaseline = 'middle';
-        posterCtx.font = `900 ${rows === 1 ? 24 : 20}px "Pretendard", "Noto Sans KR", sans-serif`;
+        posterCtx.font = `900 ${rows === 1 ? 24 : 21}px "Pretendard", "Noto Sans KR", sans-serif`;
         posterCtx.fillText(`기호 ${cand.symbolNumber}`, x + 14, y + ribbonH / 2 + 1);
 
         posterCtx.fillStyle = 'rgba(255,255,255,0.92)';
@@ -1017,23 +1029,13 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
           cand.party.length > 9 ? `${cand.party.slice(0, 9)}…` : cand.party;
         posterCtx.fillText(shortParty, x + cardW - 14, y + ribbonH / 2 + 1);
 
-        // Cute red push-pin at top center of poster
-        posterCtx.fillStyle = '#DC5A5A';
-        posterCtx.beginPath();
-        posterCtx.arc(x + cardW / 2, y + 6, 7, 0, Math.PI * 2);
-        posterCtx.fill();
-        posterCtx.fillStyle = 'rgba(255,255,255,0.55)';
-        posterCtx.beginPath();
-        posterCtx.arc(x + cardW / 2 - 2, y + 4, 2.2, 0, Math.PI * 2);
-        posterCtx.fill();
-
         if (hasImg) {
           // Photo poster area
-          const imgPad = 12;
+          const imgPad = 10;
           const imgX = x + imgPad;
-          const imgY = y + ribbonH + 10;
+          const imgY = y + ribbonH + 9;
           const imgW = cardW - imgPad * 2;
-          const imgH = cardH - ribbonH - (rows === 1 ? 116 : 82);
+          const imgH = cardH - ribbonH - (rows === 1 ? 114 : 78);
 
           await drawCandidateVisualOnCanvas(posterCtx, cand, imgX, imgY, imgW, imgH, {
             radius: 12,
@@ -1046,11 +1048,11 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
           posterCtx.roundRect(imgX, imgY, imgW, imgH, 12);
           posterCtx.stroke();
 
-          // Candidate title below photo
+          // Candidate title below photo (bold, high contrast for isometric floor viewing)
           posterCtx.fillStyle = '#1E293B';
           posterCtx.textAlign = 'center';
           posterCtx.textBaseline = 'middle';
-          const titleFontSize = rows === 1 ? 26 : 19;
+          const titleFontSize = rows === 1 ? 26 : 21;
           posterCtx.font = `900 ${titleFontSize}px "Pretendard", "Noto Sans KR", sans-serif`;
           const maxChars = rows === 1 ? 14 : 12;
           const cleanTitle =
@@ -1067,7 +1069,7 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
             posterCtx.fillText(cleanSub, x + cardW / 2, imgY + imgH + (rows === 1 ? 68 : 49));
           }
         } else {
-          // Classic Typographic Election Poster Card (for text-only polls)
+          // Classic Typographic Election Floor Guide Card (for text-only polls)
           const centerX = x + cardW / 2;
           const badgeY = y + ribbonH + (rows === 1 ? 120 : 62);
           const badgeR = rows === 1 ? 58 : 34;
@@ -1131,6 +1133,704 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     };
 
     void paintPosterBoard();
+  };
+
+  // ========================================================
+  // 3-C. Winter Theme Exclusive Diorama ('poll-winter-snacks' ONLY)
+  // - 2 Large Warm-Oak Lattice Windows with 3D Snowy Outdoor Scenery & Falling Snow
+  // - Snow-dusted miniature clay winter fir trees in ceramic pots
+  // - Warm twinkling fairy-light garlands & festive winter wreaths
+  // - Gentle cozy hearth glow (safe with toneMappingExposure = 1.02)
+  // ========================================================
+  const winterThemeGroup = new THREE.Group();
+  winterThemeGroup.visible = false;
+  sceneGroup.add(winterThemeGroup);
+
+  interface SnowParticleField {
+    positions: Float32Array;
+    attr: THREE.BufferAttribute;
+    baseX: Float32Array;
+    speeds: Float32Array;
+    swayAmp: Float32Array;
+    swayFreq: Float32Array;
+    phases: Float32Array;
+    minY: number;
+    maxY: number;
+    minX: number;
+    maxX: number;
+  }
+
+  const snowFields: SnowParticleField[] = [];
+  const twinkleBulbMaterials: { mat: THREE.MeshStandardMaterial; phase: number }[] = [];
+  let winterAnimTime = 0;
+
+  // Shared soft circular radial snowflake sprite texture
+  const createSnowflakeTexture = (): THREE.CanvasTexture => {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 64;
+    const ctx = c.getContext('2d')!;
+    const grad = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+    grad.addColorStop(0.45, 'rgba(244, 250, 255, 0.92)');
+    grad.addColorStop(1, 'rgba(230, 245, 255, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  };
+  const sharedSnowflakeTex = createSnowflakeTexture();
+
+  // Crisp twilight/snowy winter outdoor sky canvas backdrop
+  const createWinterSkyBackdropTexture = (seedOffset: number): THREE.CanvasTexture => {
+    const c = document.createElement('canvas');
+    c.width = 768;
+    c.height = 448;
+    const ctx = c.getContext('2d')!;
+
+    // Cozy clear winter dusk-to-horizon sky gradient
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, 448);
+    skyGrad.addColorStop(0, '#2B4C7E');
+    skyGrad.addColorStop(0.45, '#5680B3');
+    skyGrad.addColorStop(0.78, '#A9CBE8');
+    skyGrad.addColorStop(1, '#DCECF8');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, 768, 448);
+
+    // Soft glowing winter moon & halo
+    const moonX = seedOffset === 0 ? 590 : 195;
+    const moonY = 92;
+    const moonGlow = ctx.createRadialGradient(moonX, moonY, 8, moonX, moonY, 96);
+    moonGlow.addColorStop(0, 'rgba(255, 248, 224, 0.95)');
+    moonGlow.addColorStop(0.32, 'rgba(255, 242, 204, 0.45)');
+    moonGlow.addColorStop(1, 'rgba(255, 242, 204, 0.0)');
+    ctx.fillStyle = moonGlow;
+    ctx.beginPath();
+    ctx.arc(moonX, moonY, 96, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#FFF9E6';
+    ctx.beginPath();
+    ctx.arc(moonX, moonY, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Subtle twinkling winter stars in upper sky
+    for (let s = 0; s < 26; s++) {
+      const sx = seededNoise(s * 17 + seedOffset * 91) * 768;
+      const sy = seededNoise(s * 31 + seedOffset * 53) * 180;
+      const sr = 1.2 + seededNoise(s * 7) * 2.1;
+      ctx.fillStyle = `rgba(255, 253, 245, ${0.45 + seededNoise(s * 11) * 0.5})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Distant snow-covered hills (2 soft depth layers)
+    ctx.fillStyle = '#B8D4EA';
+    ctx.beginPath();
+    ctx.moveTo(0, 315);
+    ctx.quadraticCurveTo(190, 245, 390, 295);
+    ctx.quadraticCurveTo(600, 340, 768, 270);
+    ctx.lineTo(768, 448);
+    ctx.lineTo(0, 448);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#EBF5FC';
+    ctx.beginPath();
+    ctx.moveTo(0, 355);
+    ctx.quadraticCurveTo(220, 305, 450, 345);
+    ctx.quadraticCurveTo(640, 375, 768, 330);
+    ctx.lineTo(768, 448);
+    ctx.lineTo(0, 448);
+    ctx.closePath();
+    ctx.fill();
+
+    // Distant warm glowing cozy village cabin silhouette with glowing yellow windows
+    const houseX = seedOffset === 0 ? 155 : 535;
+    const houseY = 296;
+    ctx.fillStyle = '#536885';
+    ctx.fillRect(houseX, houseY, 68, 44);
+    ctx.fillStyle = '#F7FBFF';
+    ctx.beginPath();
+    ctx.moveTo(houseX - 10, houseY + 2);
+    ctx.lineTo(houseX + 34, houseY - 28);
+    ctx.lineTo(houseX + 78, houseY + 2);
+    ctx.closePath();
+    ctx.fill();
+    // Warm glowing cabin windows
+    ctx.fillStyle = '#FFD984';
+    ctx.fillRect(houseX + 12, houseY + 12, 16, 16);
+    ctx.fillRect(houseX + 40, houseY + 12, 16, 16);
+
+    // Distant soft winter pine silhouettes
+    const treeXs = [70, 118, 268, 335, 448, 635, 695];
+    treeXs.forEach((tx, idx) => {
+      const ty = 328 + (idx % 2) * 14;
+      const th = 56 + (idx % 3) * 16;
+      ctx.fillStyle = '#4B6B7C';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty - th);
+      ctx.lineTo(tx - th * 0.34, ty);
+      ctx.lineTo(tx + th * 0.34, ty);
+      ctx.closePath();
+      ctx.fill();
+
+      // White snow cap on distant pine
+      ctx.fillStyle = '#F4FAFF';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty - th);
+      ctx.lineTo(tx - th * 0.19, ty - th * 0.56);
+      ctx.lineTo(tx + th * 0.19, ty - th * 0.56);
+      ctx.closePath();
+      ctx.fill();
+    });
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  };
+
+  // Helper: Build a recessed 3D Winter Snow Window with animated falling snowflakes
+  const createWinterSnowWindow = (
+    width: number,
+    height: number,
+    verticalMullions: number,
+    seedOffset: number
+  ): THREE.Group => {
+    const winGroup = new THREE.Group();
+    const frameThick = 0.14;
+    const frameDepth = 0.24;
+    const innerW = width - frameThick * 2;
+    const innerH = height - frameThick * 2;
+
+    const snowMat = new THREE.MeshStandardMaterial({
+      color: 0xf7fbff,
+      roughness: 0.78,
+      metalness: 0.0,
+      emissive: 0x3a5270,
+      emissiveIntensity: 0.16,
+    });
+    const outdoorPineMat = new THREE.MeshStandardMaterial({
+      color: 0x355c50,
+      roughness: 0.84,
+      metalness: 0.0,
+    });
+
+    // 1. Deep Wooden Shadowbox Frame (protrudes cleanly from wall face)
+    const topBeam = new THREE.Mesh(
+      createRoundedSlabGeometry(width + 0.08, frameThick, frameDepth + 0.04, 0.04, 0.015),
+      lightOakMat
+    );
+    topBeam.position.set(0, height / 2 - frameThick / 2, frameDepth / 2);
+    topBeam.castShadow = true;
+    winGroup.add(topBeam);
+
+    const bottomSill = new THREE.Mesh(
+      createRoundedSlabGeometry(width + 0.2, frameThick + 0.02, frameDepth + 0.14, 0.05, 0.02),
+      mediumOakMat
+    );
+    bottomSill.position.set(0, -height / 2 + frameThick / 2 - 0.01, frameDepth / 2 + 0.05);
+    bottomSill.castShadow = true;
+    bottomSill.receiveShadow = true;
+    winGroup.add(bottomSill);
+
+    [-1, 1].forEach((side) => {
+      const sideBeam = new THREE.Mesh(
+        createRoundedPanelGeometry(frameThick, height - frameThick * 1.4, frameDepth, 0.04, 0.015),
+        lightOakMat
+      );
+      sideBeam.position.set(side * (width / 2 - frameThick / 2), 0, frameDepth / 2);
+      sideBeam.castShadow = true;
+      winGroup.add(sideBeam);
+    });
+
+    // 2. Snowy Winter Sky Canvas Backdrop inside window alcove
+    const backdropMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(innerW + 0.04, innerH + 0.04),
+      new THREE.MeshBasicMaterial({
+        map: createWinterSkyBackdropTexture(seedOffset),
+      })
+    );
+    backdropMesh.position.set(0, 0, 0.03);
+    winGroup.add(backdropMesh);
+
+    // 3. 3D Miniature Snow-Dusted Pines & Warm Streetlamp inside window depth
+    const baseSnowFloor = new THREE.Mesh(
+      new THREE.BoxGeometry(innerW, 0.22, 0.16),
+      snowMat
+    );
+    baseSnowFloor.position.set(0, -innerH / 2 + 0.08, 0.11);
+    winGroup.add(baseSnowFloor);
+
+    // Sculpted rolling snowdrifts along the bottom outer windowsill
+    const driftCount = Math.max(4, Math.round(innerW * 1.8));
+    for (let d = 0; d < driftCount; d++) {
+      const frac = driftCount === 1 ? 0.5 : d / (driftCount - 1);
+      const dx = -innerW * 0.44 + frac * innerW * 0.88;
+      const r = 0.13 + seededNoise(d * 19 + seedOffset * 7) * 0.09;
+      const drift = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), snowMat);
+      drift.scale.set(1.75, 0.55, 0.65);
+      drift.position.set(dx, -innerH / 2 + 0.16, 0.145);
+      winGroup.add(drift);
+    }
+
+    // 3D miniature snow-capped fir trees inside the window vista
+    const pineOffsets =
+      innerW > 3.5
+        ? [-1.62, -0.82, 0.95, 1.65]
+        : [-1.08, -0.35, 1.02];
+    pineOffsets.forEach((px, idx) => {
+      const pineG = new THREE.Group();
+      const s = 0.78 + (idx % 2) * 0.22;
+      const lowerCone = new THREE.Mesh(new THREE.ConeGeometry(0.2 * s, 0.44 * s, 10), outdoorPineMat);
+      lowerCone.position.y = 0.22 * s;
+      pineG.add(lowerCone);
+
+      const upperCone = new THREE.Mesh(new THREE.ConeGeometry(0.15 * s, 0.36 * s, 10), outdoorPineMat);
+      upperCone.position.y = 0.46 * s;
+      pineG.add(upperCone);
+
+      const snowTip = new THREE.Mesh(new THREE.ConeGeometry(0.115 * s, 0.22 * s, 10), snowMat);
+      snowTip.position.y = 0.54 * s;
+      pineG.add(snowTip);
+
+      pineG.scale.z = 0.38;
+      pineG.position.set(px, -innerH / 2 + 0.15, 0.085);
+      winGroup.add(pineG);
+    });
+
+    // Warm glowing miniature outdoor streetlamp inside the window scene
+    const lampX = innerW > 3.5 ? 0.25 : 0.38;
+    const lampPost = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.018, 0.024, 0.78, 8),
+      new THREE.MeshStandardMaterial({ color: 0x3b4452, roughness: 0.6 })
+    );
+    lampPost.position.set(lampX, -innerH / 2 + 0.52, 0.095);
+    winGroup.add(lampPost);
+
+    const lampHeadMat = new THREE.MeshStandardMaterial({
+      color: 0xfff3c4,
+      emissive: 0xffc864,
+      emissiveIntensity: 1.75,
+      roughness: 0.3,
+    });
+    const lampHead = new THREE.Mesh(new THREE.SphereGeometry(0.068, 12, 10), lampHeadMat);
+    lampHead.scale.set(1, 1, 0.65);
+    lampHead.position.set(lampX, -innerH / 2 + 0.92, 0.095);
+    winGroup.add(lampHead);
+
+    // 4. Animated Falling Snowflakes (THREE.Points inside window volume)
+    const flakeCount = innerW > 3.5 ? 110 : 80;
+    const positions = new Float32Array(flakeCount * 3);
+    const baseX = new Float32Array(flakeCount);
+    const speeds = new Float32Array(flakeCount);
+    const swayAmp = new Float32Array(flakeCount);
+    const swayFreq = new Float32Array(flakeCount);
+    const phases = new Float32Array(flakeCount);
+
+    const minX = -innerW / 2 + 0.08;
+    const maxX = innerW / 2 - 0.08;
+    const minY = -innerH / 2 + 0.16;
+    const maxY = innerH / 2 - 0.06;
+
+    for (let i = 0; i < flakeCount; i++) {
+      const rx = minX + seededNoise(i * 13.7 + seedOffset * 101) * (maxX - minX);
+      const ry = minY + seededNoise(i * 29.3 + seedOffset * 47) * (maxY - minY);
+      const rz = 0.115 + seededNoise(i * 7.1 + seedOffset * 19) * 0.065;
+      baseX[i] = rx;
+      positions[i * 3] = rx;
+      positions[i * 3 + 1] = ry;
+      positions[i * 3 + 2] = rz;
+      speeds[i] = 0.28 + seededNoise(i * 41.2 + seedOffset) * 0.34;
+      swayAmp[i] = 0.05 + seededNoise(i * 19.8) * 0.11;
+      swayFreq[i] = 1.1 + seededNoise(i * 23.4) * 1.4;
+      phases[i] = seededNoise(i * 5.9) * Math.PI * 2;
+    }
+
+    const snowGeo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(positions, 3);
+    snowGeo.setAttribute('position', posAttr);
+
+    const snowPointsMat = new THREE.PointsMaterial({
+      map: sharedSnowflakeTex,
+      color: 0xffffff,
+      size: 0.115,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const snowPoints = new THREE.Points(snowGeo, snowPointsMat);
+    winGroup.add(snowPoints);
+
+    snowFields.push({
+      positions,
+      attr: posAttr,
+      baseX,
+      speeds,
+      swayAmp,
+      swayFreq,
+      phases,
+      minY,
+      maxY,
+      minX,
+      maxX,
+    });
+
+    // 5. Low-opacity glossy glass pane (keeps snowy view & snowflakes crisp)
+    const glassMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(innerW, innerH),
+      new THREE.MeshStandardMaterial({
+        color: 0xe6f4ff,
+        transparent: true,
+        opacity: 0.15,
+        roughness: 0.12,
+        metalness: 0.08,
+        depthWrite: false,
+      })
+    );
+    glassMesh.position.set(0, 0, 0.2);
+    winGroup.add(glassMesh);
+
+    // 6. Warm Oak Lattice Mullions (window grid bars)
+    const hBar = new THREE.Mesh(new THREE.BoxGeometry(innerW, 0.065, 0.05), lightOakMat);
+    hBar.position.set(0, 0.08, 0.215);
+    winGroup.add(hBar);
+
+    for (let m = 1; m <= verticalMullions; m++) {
+      const mx = -innerW / 2 + (innerW / (verticalMullions + 1)) * m;
+      const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.065, innerH, 0.05), lightOakMat);
+      vBar.position.set(mx, 0, 0.215);
+      winGroup.add(vBar);
+    }
+
+    // Subtle indoor snow-puff frost accents resting on lower mullion bar
+    for (let f = 0; f <= verticalMullions; f++) {
+      const paneW = innerW / (verticalMullions + 1);
+      const cx = -innerW / 2 + paneW * (f + 0.5);
+      const sillSnow = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.032, paneW * 0.55, 6, 10),
+        snowMat
+      );
+      sillSnow.rotation.z = Math.PI / 2;
+      sillSnow.scale.set(0.75, 1, 0.7);
+      sillSnow.position.set(cx, -innerH / 2 + 0.04, 0.21);
+      winGroup.add(sillSnow);
+    }
+
+    return winGroup;
+  };
+
+  // Window #1: Panoramic Left Wall Winter Window (replaces old blind-spot poster wall space!)
+  const leftWinterWindow = createWinterSnowWindow(4.65, 2.38, 2, 0);
+  leftWinterWindow.position.set(-10.98, 3.45, -1.8);
+  leftWinterWindow.rotation.y = Math.PI / 2;
+  winterThemeGroup.add(leftWinterWindow);
+
+  // Window #2: Back Wall Right Winter Window (balances Taegeukgi on back wall left; clear of banner!)
+  const backRightWinterWindow = createWinterSnowWindow(3.3, 2.22, 1, 1);
+  backRightWinterWindow.position.set(7.9, 3.55, -8.98);
+  winterThemeGroup.add(backRightWinterWindow);
+
+  // Helper: Snow-Dusted Clay Miniature Winter Fir Tree in Warm Ceramic Pot
+  const createClayWinterFirTree = (scale = 1): THREE.Group => {
+    const treeGroup = new THREE.Group();
+    const ceramicPotMat = new THREE.MeshStandardMaterial({
+      color: 0xc95a5a, // Festive warm winter cranberry pot
+      roughness: 0.78,
+      metalness: 0.0,
+    });
+    const creamPotTrimMat = new THREE.MeshStandardMaterial({
+      color: 0xfaf3e8,
+      roughness: 0.82,
+    });
+    const firMat1 = new THREE.MeshStandardMaterial({
+      color: 0x3b6e56,
+      roughness: 0.84,
+      metalness: 0.0,
+    });
+    const firMat2 = new THREE.MeshStandardMaterial({
+      color: 0x4b8267,
+      roughness: 0.84,
+      metalness: 0.0,
+    });
+    const snowCapMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fbff,
+      roughness: 0.82,
+      metalness: 0.0,
+    });
+
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.18, 0.36, 18), ceramicPotMat);
+    pot.position.y = 0.18;
+    pot.castShadow = true;
+    pot.receiveShadow = true;
+    treeGroup.add(pot);
+
+    const potRim = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.036, 10, 20), creamPotTrimMat);
+    potRim.rotation.x = Math.PI / 2;
+    potRim.position.y = 0.35;
+    potRim.castShadow = true;
+    treeGroup.add(potRim);
+
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.07, 0.36, 10),
+      new THREE.MeshStandardMaterial({ color: 0x7b583e, roughness: 0.88 })
+    );
+    trunk.position.y = 0.45;
+    trunk.castShadow = true;
+    treeGroup.add(trunk);
+
+    // 3 tiered rounded clay fir boughs + snow dusting rings
+    const tiers = [
+      { y: 0.78, r: 0.44, h: 0.56, mat: firMat1 },
+      { y: 1.15, r: 0.35, h: 0.48, mat: firMat2 },
+      { y: 1.48, r: 0.25, h: 0.42, mat: firMat1 },
+    ];
+    tiers.forEach(({ y, r, h, mat }) => {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 16), mat);
+      cone.position.y = y;
+      cone.castShadow = true;
+      cone.receiveShadow = true;
+      treeGroup.add(cone);
+
+      // Soft snowy frosting rim on bough
+      const snowRim = new THREE.Mesh(new THREE.TorusGeometry(r * 0.76, 0.036, 8, 16), snowCapMat);
+      snowRim.rotation.x = Math.PI / 2;
+      snowRim.position.y = y - h * 0.28;
+      treeGroup.add(snowRim);
+    });
+
+    // Cute warm gold topper star/orb & tiny pastel clay ornaments
+    const topperMat = new THREE.MeshStandardMaterial({
+      color: 0xffd56b,
+      emissive: 0xffbc42,
+      emissiveIntensity: 0.65,
+      roughness: 0.4,
+    });
+    const topper = new THREE.Mesh(new THREE.OctahedronGeometry(0.095, 0), topperMat);
+    topper.position.y = 1.75;
+    treeGroup.add(topper);
+
+    const ornColors = [0xe86161, 0xffd166, 0xfff8ec, 0x7ec4f0];
+    const ornPositions: [number, number, number][] = [
+      [0.24, 0.72, 0.22],
+      [-0.26, 0.78, 0.16],
+      [0.04, 0.82, -0.28],
+      [0.18, 1.1, 0.16],
+      [-0.17, 1.16, 0.15],
+      [0.08, 1.4, 0.14],
+    ];
+    ornPositions.forEach(([ox, oy, oz], idx) => {
+      const ornMat = new THREE.MeshStandardMaterial({
+        color: ornColors[idx % ornColors.length],
+        emissive: idx % 2 === 1 ? 0xffc864 : 0x000000,
+        emissiveIntensity: idx % 2 === 1 ? 0.55 : 0,
+        roughness: 0.45,
+      });
+      const orn = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), ornMat);
+      orn.position.set(ox, oy, oz);
+      treeGroup.add(orn);
+    });
+
+    treeGroup.scale.setScalar(scale);
+    return treeGroup;
+  };
+
+  // Place 3 snow-dusted winter trees in exact non-walkable corner spots (+ 1 cozy edge tree)
+  const winterTreeBackLeft = createClayWinterFirTree(1.06);
+  winterTreeBackLeft.position.set(-9.9, 0, -7.9);
+  winterThemeGroup.add(winterTreeBackLeft);
+
+  const winterTreeBackRight = createClayWinterFirTree(1.14);
+  winterTreeBackRight.position.set(9.7, 0, -7.8);
+  winterThemeGroup.add(winterTreeBackRight);
+
+  const winterTreeFrontLeft = createClayWinterFirTree(0.96);
+  winterTreeFrontLeft.position.set(-9.8, 0, 7.6);
+  winterThemeGroup.add(winterTreeFrontLeft);
+
+  // Helper: Warm Glowing Fairy-Light Garland Draped Along Banner / Windows
+  const createFairyLightGarland = (
+    points: THREE.Vector3[],
+    bulbCount: number
+  ): THREE.Group => {
+    const g = new THREE.Group();
+    const curve = new THREE.CatmullRomCurve3(points);
+    const cordGeo = new THREE.TubeGeometry(curve, 32, 0.018, 8, false);
+    const cordMat = new THREE.MeshStandardMaterial({
+      color: 0x3b634b,
+      roughness: 0.85,
+    });
+    const cordMesh = new THREE.Mesh(cordGeo, cordMat);
+    g.add(cordMesh);
+
+    const bulbGeo = new THREE.SphereGeometry(0.046, 10, 8);
+    const warmBulbColors = [0xffe7a8, 0xffd584, 0xfff3d4];
+
+    for (let i = 0; i < bulbCount; i++) {
+      const t = bulbCount === 1 ? 0.5 : i / (bulbCount - 1);
+      const pt = curve.getPoint(t);
+      const mat = new THREE.MeshStandardMaterial({
+        color: warmBulbColors[i % warmBulbColors.length],
+        emissive: 0xffc666,
+        emissiveIntensity: 1.25,
+        roughness: 0.25,
+      });
+      const bulb = new THREE.Mesh(bulbGeo, mat);
+      bulb.position.copy(pt);
+      bulb.position.y -= 0.032;
+      g.add(bulb);
+      twinkleBulbMaterials.push({ mat, phase: i * 0.85 });
+    }
+    return g;
+  };
+
+  // Garland #1: Draped along the top edge of the Overhead Grand Banner
+  winterThemeGroup.add(
+    createFairyLightGarland(
+      [
+        new THREE.Vector3(-5.15, 5.14, -8.84),
+        new THREE.Vector3(-2.6, 4.92, -8.84),
+        new THREE.Vector3(0, 5.1, -8.84),
+        new THREE.Vector3(2.6, 4.92, -8.84),
+        new THREE.Vector3(5.15, 5.14, -8.84),
+      ],
+      15
+    )
+  );
+
+  // Garland #2: Draped across top of Left Wall Winter Window
+  winterThemeGroup.add(
+    createFairyLightGarland(
+      [
+        new THREE.Vector3(-10.74, 4.74, -4.15),
+        new THREE.Vector3(-10.74, 4.54, -2.95),
+        new THREE.Vector3(-10.74, 4.7, -1.8),
+        new THREE.Vector3(-10.74, 4.54, -0.65),
+        new THREE.Vector3(-10.74, 4.74, 0.55),
+      ],
+      11
+    )
+  );
+
+  // Garland #3: Draped across top of Back Wall Right Winter Window
+  winterThemeGroup.add(
+    createFairyLightGarland(
+      [
+        new THREE.Vector3(6.2, 4.76, -8.74),
+        new THREE.Vector3(7.05, 4.58, -8.74),
+        new THREE.Vector3(7.9, 4.72, -8.74),
+        new THREE.Vector3(8.75, 4.58, -8.74),
+        new THREE.Vector3(9.6, 4.76, -8.74),
+      ],
+      9
+    )
+  );
+
+  // Helper: Sculpted Clay Winter Wreath with Red Berries & Ribbon Bow
+  const createClayWinterWreath = (): THREE.Group => {
+    const w = new THREE.Group();
+    const ringMat = new THREE.MeshStandardMaterial({
+      color: 0x3b7252,
+      roughness: 0.84,
+    });
+    const berryMat = new THREE.MeshStandardMaterial({
+      color: 0xd9454b,
+      roughness: 0.45,
+    });
+    const ribbonMat = new THREE.MeshStandardMaterial({
+      color: 0xd94b50,
+      roughness: 0.65,
+    });
+
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.088, 12, 24), ringMat);
+    ring.castShadow = true;
+    w.add(ring);
+
+    // Subtle snow puffs & holly berries around the wreath
+    const berryGeo = new THREE.SphereGeometry(0.036, 10, 8);
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2;
+      const berry = new THREE.Mesh(berryGeo, berryMat);
+      berry.position.set(Math.cos(ang) * 0.32, Math.sin(ang) * 0.32, 0.075);
+      w.add(berry);
+    }
+
+    // Top red clay bow
+    const bowCenter = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), ribbonMat);
+    bowCenter.position.set(0, 0.33, 0.09);
+    w.add(bowCenter);
+
+    [-1, 1].forEach((side) => {
+      const loop = new THREE.Mesh(new THREE.SphereGeometry(0.072, 12, 10), ribbonMat);
+      loop.scale.set(1.25, 0.72, 0.55);
+      loop.position.set(side * 0.095, 0.35, 0.085);
+      loop.rotation.z = side * -0.22;
+      w.add(loop);
+
+      const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.028, 0.14, 6, 10), ribbonMat);
+      tail.position.set(side * 0.055, 0.21, 0.08);
+      tail.rotation.z = side * 0.28;
+      w.add(tail);
+    });
+
+    return w;
+  };
+
+  // Wreath #1: Back wall between Taegeukgi (-8.0) and Overhead Banner (-5.1) -> clear spot at X = -5.85
+  const backWreath = createClayWinterWreath();
+  backWreath.position.set(-5.85, 3.85, -8.92);
+  winterThemeGroup.add(backWreath);
+
+  // Wreath #2: Left wall south of Left Window (above butterPartition) -> clear spot at Z = 2.2
+  const leftWreath = createClayWinterWreath();
+  leftWreath.position.set(-10.92, 3.35, 2.2);
+  leftWreath.rotation.y = Math.PI / 2;
+  winterThemeGroup.add(leftWreath);
+
+  // Subtle cozy warm interior glow for winter cabin vibe (gentle intensity — never washes out exposure 1.02)
+  const winterWarmLight = new THREE.PointLight(0xffcb85, 0.35, 16, 1.8);
+  winterWarmLight.position.set(-3.2, 4.1, -3.2);
+  winterThemeGroup.add(winterWarmLight);
+
+  const setWinterTheme = (enabled: boolean) => {
+    winterThemeGroup.visible = enabled;
+    defaultPlantsGroup.visible = !enabled;
+  };
+
+  const update = (dt: number) => {
+    if (!winterThemeGroup.visible) return;
+    const clampedDt = Math.min(Math.max(dt, 0.0001), 0.05);
+    winterAnimTime += clampedDt;
+
+    // Animate gently drifting falling snow outside both windows
+    for (let f = 0; f < snowFields.length; f++) {
+      const field = snowFields[f];
+      const { positions, baseX, speeds, swayAmp, swayFreq, phases, minY, maxY, minX, maxX } = field;
+      const count = speeds.length;
+      for (let i = 0; i < count; i++) {
+        let y = positions[i * 3 + 1] - speeds[i] * clampedDt;
+        if (y < minY) {
+          y = maxY;
+        }
+        const x = THREE.MathUtils.clamp(
+          baseX[i] + Math.sin(winterAnimTime * swayFreq[i] + phases[i]) * swayAmp[i],
+          minX,
+          maxX
+        );
+        positions[i * 3] = x;
+        positions[i * 3 + 1] = y;
+      }
+      field.attr.needsUpdate = true;
+    }
+
+    // Subtle warm fairy-light twinkle
+    for (let b = 0; b < twinkleBulbMaterials.length; b++) {
+      const item = twinkleBulbMaterials[b];
+      item.mat.emissiveIntensity = 1.05 + 0.38 * Math.sin(winterAnimTime * 2.4 + item.phase);
+    }
   };
 
   // ========================================================
@@ -2141,6 +2841,8 @@ export function buildPollingStationEnvironment(): EnvironmentResult {
     updateBeaconActive,
     updateBannerTitle,
     updateElectionPosterWall,
+    setWinterTheme,
+    update,
     ballotBoxMesh,
   };
 }

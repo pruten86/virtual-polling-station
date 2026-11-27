@@ -130,8 +130,8 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-3 bg-slate-950/85 backdrop-blur-md">
       <div
-        className={`relative w-full max-h-[96dvh] sm:max-h-[92dvh] flex flex-col transition-all duration-700 ease-in-out ${
-          isPhotoPoll ? 'max-w-xl sm:max-w-3xl' : 'max-w-xl sm:max-w-2xl'
+        className={`relative w-full max-h-[90dvh] flex flex-col transition-all duration-700 ease-in-out ${
+          isPhotoPoll ? 'max-w-xl sm:max-w-2xl' : 'max-w-xl sm:max-w-2xl'
         } ${
           isFolding
             ? 'scale-75 -rotate-6 opacity-0 translate-y-12'
@@ -155,12 +155,12 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
           </button>
         </div>
 
-        {/* Realistic Korean Election Ballot Paper (Slim Mobile Header/Footer + Single-Page Fit) */}
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[#fcfbf7] border-2 border-[#d6cfbe] shadow-2xl px-2 py-2 sm:px-3.5 sm:py-3.5 text-slate-900 rounded-b-2xl relative select-none">
+        {/* Realistic Korean Election Ballot Paper (Fixed Header & Footer + Smooth Middle Scroll) */}
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[#fcfbf7] border-2 border-[#d6cfbe] shadow-2xl px-2.5 py-2.5 sm:px-4 sm:py-3.5 text-slate-900 rounded-b-2xl relative select-none">
           {/* Subtle paper grain texture pattern */}
           <div className="absolute inset-0 bg-[radial-gradient(#e2d9c8_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none rounded-b-2xl" />
 
-          {/* Ballot Top Header (Compressed vertical padding for mobile) */}
+          {/* Ballot Top Header (Fixed shrink-0) */}
           <div className="relative shrink-0 text-center border-b-2 border-slate-900 pb-1.5 mb-1.5 sm:pb-2.5 sm:mb-2.5">
             <div className="flex justify-between items-center text-[10px] sm:text-[11px] text-slate-500 mb-0.5">
               <span>서울특별시 가상 제1투표구</span>
@@ -174,13 +174,13 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
             </p>
           </div>
 
-          {/* Voting Instruction Note (Compact) */}
-          <div className="relative shrink-0 flex items-center gap-1.5 px-2 py-1 sm:p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[10px] sm:text-xs mb-1.5 sm:mb-2.5 leading-tight sm:leading-snug">
+          {/* Voting Instruction Note (Fixed shrink-0) */}
+          <div className="relative shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 sm:p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[10.5px] sm:text-xs mb-2 sm:mb-2.5 leading-snug">
             <Info className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 shrink-0" />
             <span className="whitespace-normal break-keep break-words">
               {isPhotoPoll ? (
                 <>
-                  사진을 누르면 크게 볼 수 있으며, 원하는 후보의 <strong>[기표란]</strong>을 눌러 날인(<strong>卜</strong>) 후 하단 <strong>[투표용지 접기]</strong>를 누르세요.
+                  사진을 누르면 크게 볼 수 있으며, 원하는 후보의 <strong>[기표란]</strong>을 눌러 날인(<strong>卜</strong>) 후 하단 <strong>[투표용지 접기]</strong>를 누르세요. (위아래 스크롤 가능)
                 </>
               ) : (
                 <>
@@ -191,50 +191,46 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
           </div>
 
           {isPhotoPoll ? (
-            /* Photo Election Ballot Card Grid (Mobile 1-col / PC 2-col, Zero Truncation) */
-            <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden border-2 border-slate-900 bg-[#f9f7f2] shadow-sm mb-1.5 sm:mb-2.5 rounded-sm">
-              <div className="shrink-0 flex items-center justify-between px-3 py-1.5 bg-slate-100 border-b-2 border-slate-900 text-[10px] sm:text-xs font-bold text-slate-700">
+            /* Photo Election Ballot 1-Column Scrollable List (Zero Truncation, Fixed-Size Photo & Stamp Box) */
+            <div className="relative flex flex-col flex-1 min-h-0 border-2 border-slate-900 bg-[#f9f7f2] shadow-sm mb-2 sm:mb-2.5 rounded-sm">
+              <div className="shrink-0 flex items-center justify-between px-3 py-1.5 bg-slate-100 border-b-2 border-slate-900 text-[10.5px] sm:text-xs font-bold text-slate-700">
                 <span>🖼️ 포토 선거 투표용지 · 후보 {candidates.length}명</span>
                 <span>사진 클릭 확대 · 기표란 날인(卜)</span>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 sm:p-2.5 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-2.5">
-                {candidates.map((candidate, idx) => {
-                  const isSelected = selectedCandidateId === candidate.id;
-                  const candidateColor = getCandidateColor(candidate, idx);
-                  const rawParty = candidate.party?.trim();
-                  const displayParty = rawParty || `기호 ${candidate.symbolNumber}번`;
-                  const rawDesc = (candidate.subtitle || candidate.description)?.trim() || '';
-                  const displayDesc = cleanCandidateDescription(rawDesc, displayParty);
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2.5 sm:p-3 pr-1 sm:pr-2">
+                <div className="grid grid-cols-1 gap-3">
+                  {candidates.map((candidate, idx) => {
+                    const isSelected = selectedCandidateId === candidate.id;
+                    const candidateColor = getCandidateColor(candidate, idx);
+                    const rawParty = candidate.party?.trim();
+                    const displayParty = rawParty || `기호 ${candidate.symbolNumber}번`;
+                    const rawDesc = (candidate.subtitle || candidate.description)?.trim() || '';
+                    const displayDesc = cleanCandidateDescription(rawDesc, displayParty);
 
-                  return (
-                    <div
-                      key={candidate.id}
-                      onClick={(e) => handleSelectCandidate(candidate.id, e)}
-                      className={`relative flex items-stretch rounded-xl border-2 bg-white overflow-hidden transition-all cursor-pointer group ${
-                        isSelected
-                          ? 'shadow-md'
-                          : 'border-slate-300 hover:border-slate-500 hover:shadow-sm'
-                      }`}
-                      style={
-                        isSelected
-                          ? {
-                              borderColor: candidateColor,
-                              backgroundColor: hexWithAlpha(candidateColor, 0.08),
-                              boxShadow: `0 0 0 2px ${hexWithAlpha(candidateColor, 0.35)}`,
-                            }
-                          : undefined
-                      }
-                    >
-                      {/* Left Candidate Color Accent Bar */}
+                    return (
                       <div
-                        className="w-1.5 shrink-0 self-stretch"
-                        style={{ backgroundColor: candidateColor }}
-                      />
-
-                      {/* Card Body: Thumbnail + Full Info */}
-                      <div className="flex-1 min-w-0 p-2 sm:p-2.5 flex items-center gap-2.5">
-                        {/* Clickable Photo Thumbnail with Symbol Badge overlay */}
+                        key={candidate.id}
+                        onClick={(e) => handleSelectCandidate(candidate.id, e)}
+                        className={`relative h-auto flex items-center gap-3 p-3 rounded-xl border-2 border-l-[6px] bg-white transition-all cursor-pointer group ${
+                          isSelected
+                            ? 'shadow-md'
+                            : 'border-slate-300 hover:border-slate-500 hover:shadow-sm'
+                        }`}
+                        style={{
+                          borderLeftColor: candidateColor,
+                          ...(isSelected
+                            ? {
+                                borderTopColor: candidateColor,
+                                borderRightColor: candidateColor,
+                                borderBottomColor: candidateColor,
+                                backgroundColor: hexWithAlpha(candidateColor, 0.08),
+                                boxShadow: `0 0 0 2px ${hexWithAlpha(candidateColor, 0.28)}`,
+                              }
+                            : undefined),
+                        }}
+                      >
+                        {/* 1. Left: Symbol Badge + Fixed Square Photo Thumbnail (shrink-0) */}
                         <div className="relative shrink-0">
                           <CandidateThumbnail
                             candidate={candidate}
@@ -244,21 +240,21 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
                               sounds.playClick();
                               setLightboxCandidate(candidate);
                             }}
-                            className="w-[74px] h-[74px] sm:w-[84px] sm:h-[84px] rounded-xl"
+                            className="w-16 h-16 sm:w-20 sm:h-20 aspect-square shrink-0 rounded-xl"
                           />
                           <span
-                            className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full flex items-center justify-center font-black text-xs text-white font-serif shadow-md border-2 border-white pointer-events-none"
+                            className="absolute -top-2 -left-2 w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center font-black text-xs sm:text-sm text-white font-serif shadow-md border-2 border-white pointer-events-none"
                             style={{ backgroundColor: candidateColor }}
                           >
                             {candidate.symbolNumber}
                           </span>
                         </div>
 
-                        {/* Full Non-Truncated Party + Title + Slogan */}
+                        {/* 2. Center: Full Party Tag + Candidate Name + Slogan (flex-1 min-w-0, Zero Clipping) */}
                         <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 text-left">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span
-                              className="inline-block px-1.5 py-0.5 rounded-md border text-[10px] font-extrabold leading-tight whitespace-normal break-keep"
+                              className="inline-block px-2 py-0.5 rounded-md border text-[10.5px] sm:text-xs font-extrabold whitespace-normal break-keep leading-relaxed"
                               style={{
                                 color: candidateColor,
                                 borderColor: hexWithAlpha(candidateColor, 0.45),
@@ -269,37 +265,33 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
                             </span>
                           </div>
 
-                          <h3 className="text-[13px] sm:text-sm font-black text-slate-950 whitespace-normal break-keep break-words leading-snug">
+                          <h3 className="text-sm sm:text-base font-black text-slate-950 whitespace-normal break-keep leading-relaxed">
                             {candidate.title}
                           </h3>
 
                           {displayDesc && (
-                            <p className="text-[11px] sm:text-xs text-slate-600 whitespace-normal break-keep break-words leading-snug">
+                            <p className="text-xs sm:text-[13px] text-slate-600 whitespace-normal break-keep leading-relaxed">
                               {displayDesc}
                             </p>
                           )}
                         </div>
-                      </div>
 
-                      {/* Right Stamp Target Box */}
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSelectCandidate(candidate.id, e);
-                        }}
-                        className="w-14 sm:w-16 shrink-0 border-l-2 border-slate-200 bg-slate-50/70 flex flex-col items-center justify-center p-1.5 relative"
-                      >
+                        {/* 3. Right: Fixed-Size Stamp Target Box (w-14 h-14 sm:w-16 sm:h-16 shrink-0) */}
                         <div
-                          className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full border-2 border-dashed flex items-center justify-center transition-all ${
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectCandidate(candidate.id, e);
+                          }}
+                          className={`w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-xl border-2 border-dashed flex flex-col items-center justify-center transition-all ${
                             isSelected
                               ? 'border-red-600 bg-red-50'
-                              : 'border-slate-300 group-hover:border-red-400 group-hover:bg-red-50/40'
+                              : 'border-slate-300 bg-slate-50/80 group-hover:border-red-400 group-hover:bg-red-50/40'
                           }`}
                         >
                           {isSelected ? (
                             <svg
                               viewBox="0 0 100 100"
-                              className="w-9 h-9 sm:w-10 sm:h-10 text-[#dc2626] animate-in zoom-in-75 duration-150 filter drop-shadow-[0_1px_2px_rgba(220,38,38,0.3)]"
+                              className="w-10 h-10 sm:w-12 sm:h-12 text-[#dc2626] animate-in zoom-in-75 duration-150 filter drop-shadow-[0_1px_2px_rgba(220,38,38,0.3)]"
                             >
                               <circle
                                 cx="50"
@@ -329,18 +321,20 @@ export const BallotPaperModal: React.FC<BallotPaperModalProps> = ({
                               />
                             </svg>
                           ) : (
-                            <span className="text-[10px] font-bold text-slate-400 group-hover:text-red-500">
-                              기표
-                            </span>
+                            <>
+                              <span className="text-[11px] sm:text-xs font-extrabold text-slate-400 group-hover:text-red-500">
+                                기표
+                              </span>
+                              <span className="text-[9px] font-semibold text-slate-400">
+                                날인란
+                              </span>
+                            </>
                           )}
                         </div>
-                        <span className="mt-0.5 text-[9px] font-bold text-slate-400">
-                          {isSelected ? '날인완료' : '기표란'}
-                        </span>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
           ) : (
